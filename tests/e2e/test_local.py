@@ -71,7 +71,9 @@ def test_local_up_ends_with_http_200() -> None:
     assert result.returncode == 0, result.stderr[-4000:]
     doc = json.loads(result.stdout)
     assert doc["ok"] is True
-    assert '"choices"' in result.stderr
+    steps = {s["path"]: s["ok"] for s in doc["data"]["steps"]}
+    assert steps["verify.tests.request"] is True
+    # kubectl run --rm -i can drop the output of a pod that exits before attach, so prove the 200 directly
     assert _completion_status() == 200
 
 
@@ -84,9 +86,18 @@ def test_status_shows_router_two_sim_pods_and_endpoint() -> None:
 
 
 def test_rerun_tests() -> None:
-    result = _llmdup("test", "--context", CONTEXT)
+    result = _llmdup("test", "--context", CONTEXT, "--json")
     assert result.returncode == 0, result.stderr[-4000:]
-    assert "HTTP 200" in result.stderr
+    doc = json.loads(result.stdout)
+    assert doc["ok"] is True
+    assert [s["path"] for s in doc["data"]["steps"]] == [
+        "env",
+        "verify.endpoint.standalone",
+        "verify.tests.request",
+        "verify.tests.shared_prefix",
+        "verify.tests.pod_metrics",
+    ]
+    assert all(s["ok"] for s in doc["data"]["steps"])
 
 
 def test_down_leaves_nothing() -> None:
