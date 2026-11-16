@@ -120,7 +120,7 @@ Notes:
 ## Phase 6: Real clusters and release
 - [ ] Gateway mode, and every accelerator and engine the guide's matrix allows
 - [ ] README: install, a local demo, screenshots of the UI, and the command reference
-- [ ] Publish 0.1.0 to PyPI after the name check
+- [ ] Publish 0.1.0 to PyPI after the name check. Name check done 16 Nov 2026: `llmdup` is free on PyPI (404) and as a GitHub user/org (404). Not published: needs the user's go-ahead.
 
 Done when:
 
