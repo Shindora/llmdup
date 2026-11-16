@@ -24,4 +24,6 @@ def test_real_release_plans_all_27_guides() -> None:
     assert len(found.entries) == 27
     for name in found.entries:
         for action in Action:
-            build_plan(Choices(guide=name), action=action, ref="v1.0.0")
+            plan = build_plan(Choices(guide=name), action=action, ref="v1.0.0")
+            if action is Action.UP:
+                assert any(s.path.startswith("deploy.") for s in plan.steps), name

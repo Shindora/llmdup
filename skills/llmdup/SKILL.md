@@ -26,10 +26,10 @@ Every subcommand takes `--json` and then prints exactly one JSON document on std
 | `llmdup guides list [--section S] --json` | Guides with section, modes and support |
 | `llmdup guides show <guide> --json` | Variables, defaults, allowed values, support matrix, step paths |
 | `llmdup doctor [guide] [choice flags] --json` | Preflight checks: tools, reachability, version, accelerators, CRDs, support, capacity, HF_TOKEN, existing release, gateway |
-| `llmdup plan <guide> [choice flags] --json` | Ordered steps with tags and exact commands; `--script` prints one bash script. Needs no cluster |
+| `llmdup plan <guide> [choice flags] [--context C] --json` | Ordered steps with tags and exact commands; `--script` prints one bash script. Without `--context` it uses the guide's defaults and needs no cluster; with it, unset choices come from detection |
 | `llmdup up <guide> [choice flags] [--dry-run] [--yes] [--no-verify] [--timeout S]` | Doctor, then run the plan, wait for ready pods, send one test request |
 | `llmdup status [--namespace N] --json` | Stacks llmdup deployed: phase, health, pods, endpoint, port-forward command |
-| `llmdup test [--namespace N]` | Run the guide's `verify.tests` steps again |
+| `llmdup test [--namespace N] [--yes]` | Run the guide's `verify.tests` steps again; tests that create cluster-scoped objects (ClusterRoles) need `--yes` |
 | `llmdup down [--namespace N] [--keep-namespace] --yes` | Run the guide's cleanup steps |
 | `llmdup local up --yes` / `llmdup local down --yes` | Kind cluster `llmdup` with the llm-d simulator; no GPU |
 | `llmdup mcp` | MCP server on stdio |
@@ -62,4 +62,4 @@ No cluster: `llmdup local up --yes` (needs Docker or Podman and kind; with Podma
 
 ## MCP tools
 
-`list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test`, `down`. Results are the same models as the CLI's `data`; tools that can return two shapes (`up`, `down`) wrap it as `{"result": ...}`. `up` and `down` without `confirm: true` change nothing and return the plan, the preflight report (for `up`) and the commands that need confirmation in `confirm`. Errors come back as tool errors whose text includes the hint.
+`list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test`, `down`. Results are the same models as the CLI's `data`; tools that can return two shapes (`up`, `test`, `down`) wrap it as `{"result": ...}`. `up` and `down` without `confirm: true` change nothing and return the plan, the kube `context`, the preflight report (for `up`) and the commands in `confirm`; `test` does the same when its tests create cluster-scoped objects. A call with `confirm: true` must pass `kube_context` set to the preview's `context`, so the change lands on the cluster the user saw. Errors come back as tool errors whose text includes the hint.

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib.util
+import re
 import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -26,6 +27,9 @@ from llmdup.core.upstream import DEFAULT_LLMD_REF, Release, release
 
 SECTIONS = ("prerequisites", "deploy", "verify", "cleanup")
 NAMESPACED_PREREQUISITES = frozenset({"namespace", "secrets"})
+DEFAULT_OPTION = "standard"
+# ponytail: keyword match on the upstream commands; a guide.yaml tag upstream would be exact
+CLUSTER_SCOPED_RUN = re.compile(r"clusterrole|customresourcedefinition|\bcrds?\b", re.IGNORECASE)
 INDEX_FILE = Path("docs/well-lit-paths/guides.yaml")
 UNLISTED = "unlisted"
 
@@ -94,28 +98,54 @@ def modes_of(data: dict[str, object]) -> list[str]:
     return []
 
 
-def static_tags(path: str, node: object, modes: list[str]) -> list[StepTag]:
-    """Classify a step-list path the way the upstream deploy-llm-d skill does.
+def manual_options(data: dict[str, object], modes: list[str]) -> set[str]:
+    """Return the step paths that are alternatives the user must pick between.
+
+    A group counts when two or more sibling step lists at depth three or more lack a `when` filter
+    on some step and one of them is named `standard`, like `deploy.modelserver.standard` and
+    `dynamic_slice`. Siblings filtered entirely by `when` select themselves from the variables.
+
+    Args:
+        data: The parsed `guide.yaml`.
+        modes: The guide's endpoint modes, which are never options.
+
+    Returns:
+        The step paths of every manual option.
+    """
+    groups: dict[str, list[str]] = {}
+    for path, node in step_lists(data):
+        parent, _, leaf = path.rpartition(".")
+        if path.count(".") < 2 or leaf in modes or path.startswith("verify.tests"):
+            continue
+        if not all(step.get("when") for step in flatten(node)):
+            groups.setdefault(parent, []).append(path)
+    return {p for paths in groups.values() if len(paths) >= 2 and any(p.endswith(f".{DEFAULT_OPTION}") for p in paths) for p in paths}
+
+
+def static_tags(path: str, node: object, modes: list[str], manual: set[str] | None = None) -> list[StepTag]:
+    """Classify a step-list path: the upstream deploy-llm-d skill's rules plus a scan of its commands.
 
     Args:
         path: Dotted step path, such as `deploy.modelserver.standard`.
         node: The step list at that path.
         modes: The guide's endpoint modes.
+        manual: Paths that `manual_options` found.
 
     Returns:
         The tags that apply to the path.
     """
     parts = path.split(".")
     tags: list[StepTag] = []
+    runs = " ".join(str(step.get("run", "")) for step in flatten(node))
     if path == "prerequisites.clone":
         tags.append(StepTag.SKIPPED)
-    elif parts[0] == "prerequisites" and parts[-1] not in NAMESPACED_PREREQUISITES:
+    elif (parts[0] == "prerequisites" and parts[-1] not in NAMESPACED_PREREQUISITES) or CLUSTER_SCOPED_RUN.search(runs):
         tags.append(StepTag.CLUSTER_SCOPED)
     if parts[:2] == ["verify", "tests"]:
         tags.append(StepTag.SENDS_TRAFFIC)
     elif len(parts) >= 2 and parts[-1] in modes:
         tags.append(StepTag.MODE)
-    elif len(parts) >= 3 and not all(step.get("when") for step in flatten(node)):
+    elif path in (manual or set()):
         tags.append(StepTag.MANUAL_OPTION)
     return tags
 
@@ -250,6 +280,7 @@ class Catalog:
         entry = self.entry(name)
         data = entry.guide.data
         modes = modes_of(data)
+        manual = manual_options(data, modes)
         return GuideInfo(
             name=entry.name,
             title=entry.title,
@@ -258,7 +289,7 @@ class Catalog:
             modes=modes,
             variables=_variables(data),
             support=_support(data),
-            steps=[StepPath(path=p, tags=static_tags(p, node, modes)) for p, node in step_lists(data)],
+            steps=[StepPath(path=p, tags=static_tags(p, node, modes, manual)) for p, node in step_lists(data)],
         )
 
     def summaries(self, accelerator: str | None = None, engine: str | None = None) -> list[GuideSummary]:

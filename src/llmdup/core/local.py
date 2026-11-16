@@ -6,8 +6,20 @@ import time
 from collections.abc import AsyncGenerator
 
 from llmdup.core.kube import CommandFailedError, Kube
-from llmdup.core.models import Action, Choices, ConfirmationNeededError, LogLine, Profile, RunEvent, RunFinished, StepFinished, StepStarted
+from llmdup.core.models import (
+    Action,
+    Choices,
+    ConfirmationNeededError,
+    LlmdupError,
+    LogLine,
+    Profile,
+    RunEvent,
+    RunFinished,
+    StepFinished,
+    StepStarted,
+)
 from llmdup.core.planner import LOCAL_GUIDE, SIM_MODEL
+from llmdup.core.runner import Prepared, prepare_up
 
 CLUSTER = "llmdup"
 CONTEXT = f"kind-{CLUSTER}"
@@ -54,11 +66,22 @@ async def create_cluster(kube: Kube) -> AsyncGenerator[RunEvent]:
 
     Yields:
         Step events for the `kind create cluster` run; nothing when the cluster exists.
+
+    Raises:
+        LlmdupError: kind could not create the cluster.
     """
     if await cluster_exists(kube):
         return
     async for event in _kind(kube, "local.cluster", "create", "cluster", "--name", CLUSTER, "--wait", "120s"):
         yield event
+        if isinstance(event, StepFinished) and not event.ok:
+            msg = "kind create cluster failed"
+            raise LlmdupError(msg, hint="is Docker or Podman running? For Podman set KIND_EXPERIMENTAL_PROVIDER=podman")
+
+
+async def prepare_local(kube: Kube, *, verify: bool = True) -> Prepared:
+    """Run the preflight checks and build the local profile's deploy plan on the kind cluster."""
+    return await prepare_up(kube, local_choices(), verify=verify)
 
 
 async def delete_cluster(kube: Kube, *, confirmed: bool) -> AsyncGenerator[RunEvent]:

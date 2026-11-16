@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from llmdup.core import state as state_store
 from llmdup.core.detect import ALLOCATABLE_ACCELERATORS, INFERENCE_POOL_CRD, detect
 from llmdup.core.guides import catalog
 from llmdup.core.kube import Kube
@@ -16,6 +17,7 @@ from llmdup.core.models import (
     ClusterFacts,
     DoctorReport,
     GuideInfo,
+    LlmdupError,
     Plan,
     Profile,
 )
@@ -77,7 +79,10 @@ def check_accelerators(facts: ClusterFacts, plan: Plan | None) -> CheckResult:
 
 
 def check_crds(facts: ClusterFacts) -> CheckResult:
-    """Warn when the Gateway API Inference Extension CRDs are missing."""
+    """Warn when the Gateway API Inference Extension CRDs are missing or cannot be listed."""
+    if "crds" in facts.unknown:
+        fix = "check your RBAC; the plan installs them if missing"
+        return _check("Inference Extension CRDs", CheckStatus.WARN, "could not list CRDs", fix)
     if INFERENCE_POOL_CRD in facts.crds:
         return _check("Inference Extension CRDs", CheckStatus.OK, f"{INFERENCE_POOL_CRD} installed")
     return _check(
@@ -197,6 +202,8 @@ def check_hf_token(plan: Plan) -> CheckResult:
 def check_existing_release(facts: ClusterFacts, plan: Plan) -> CheckResult:
     """Fail when a Helm release named after the guide exists in the namespace."""
     name = _value(plan, "GUIDE_NAME") or plan.guide
+    if "helm" in facts.unknown:
+        return _check("Existing release", CheckStatus.WARN, "could not list Helm releases", "check that helm can reach the cluster")
     if any(r.name == name and r.namespace == plan.namespace for r in facts.helm_releases):
         return _check(
             "Existing release",
@@ -205,6 +212,23 @@ def check_existing_release(facts: ClusterFacts, plan: Plan) -> CheckResult:
             f"tear it down with `llmdup down --namespace {plan.namespace}`, or pass --namespace",
         )
     return _check("Existing release", CheckStatus.OK, f"no release {name} in {plan.namespace}")
+
+
+async def check_existing_stack(kube: Kube, plan: Plan) -> CheckResult:
+    """Fail when llmdup already recorded a stack in the namespace; guides do not stack."""
+    try:
+        found = await state_store.load(kube, plan.namespace)
+    except LlmdupError as error:
+        return _check("Existing stack", CheckStatus.WARN, str(error))
+    if found:
+        stack = found[0]
+        return _check(
+            "Existing stack",
+            CheckStatus.FAIL,
+            f"namespace {plan.namespace} already holds {stack.guide} ({stack.phase})",
+            f"tear it down with `llmdup down --namespace {plan.namespace}`, or pass --namespace",
+        )
+    return _check("Existing stack", CheckStatus.OK, f"no llmdup stack in {plan.namespace}")
 
 
 def check_gateway(facts: ClusterFacts, plan: Plan) -> CheckResult:
@@ -251,6 +275,7 @@ async def doctor(
             await check_capacity(kube, facts, info, plan, catalog(ref).release.path),
             check_hf_token(plan),
             check_existing_release(facts, plan),
+            await check_existing_stack(kube, plan),
             check_gateway(facts, plan),
         ]
     return DoctorReport(guide=choices.guide if choices else None, facts=facts, checks=checks)

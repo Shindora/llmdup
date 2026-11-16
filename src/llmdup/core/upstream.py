@@ -6,6 +6,7 @@ import re
 import shutil
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from functools import cache
@@ -13,12 +14,13 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from llmdup.core.models import UsageError
+from llmdup.core.models import LlmdupError, UsageError
 
 DEFAULT_LLMD_REF = "v1.0.0"
 TARBALL_URL = "https://codeload.github.com/llm-d/llm-d/tar.gz/refs/tags/{ref}"
 SOURCE_FILE = ".llmdup-source.json"
 _REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+KNOWN_COMMITS = {"v1.0.0": "378b42d18dabe0b9c4ced4e6f3670d93b52db08e"}
 
 
 class Release(BaseModel, frozen=True):
@@ -78,10 +80,12 @@ def _download(ref: str, root: Path) -> Release:
     url = TARBALL_URL.format(ref=ref)
     with tempfile.TemporaryDirectory(dir=root, prefix=f".{ref}-") as tmp:
         archive = Path(tmp) / "release.tar.gz"
-        with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as out:  # ruff: ignore[suspicious-url-open-usage]
-            shutil.copyfileobj(response, out)
+        _fetch(url, ref, archive)
         with tarfile.open(archive, "r:gz") as tar:
             commit = tar.pax_headers.get("comment")
+            if ref in KNOWN_COMMITS and commit != KNOWN_COMMITS[ref]:
+                msg = f"llm-d {ref} tarball is commit {commit}, expected {KNOWN_COMMITS[ref]}"
+                raise LlmdupError(msg, hint="the tag moved upstream; check before trusting it")
             tar.extractall(Path(tmp) / "x", filter="data")
         (top,) = (Path(tmp) / "x").iterdir()
         found = Release(
@@ -98,3 +102,18 @@ def _download(ref: str, root: Path) -> Release:
             if not (root / ref / SOURCE_FILE).is_file():
                 raise
     return Release.model_validate_json((root / ref / SOURCE_FILE).read_text())
+
+
+def _fetch(url: str, ref: str, archive: Path) -> None:
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as out:  # ruff: ignore[suspicious-url-open-usage]
+            shutil.copyfileobj(response, out)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            msg = f"llm-d has no tag {ref!r}"
+            raise UsageError(msg, hint="see https://github.com/llm-d/llm-d/tags") from exc
+        msg = f"downloading llm-d {ref} failed: HTTP {exc.code}"
+        raise LlmdupError(msg) from exc
+    except urllib.error.URLError as exc:
+        msg = f"cannot download llm-d {ref}: {exc.reason}"
+        raise LlmdupError(msg, hint="check the network, or point LLMDUP_LLMD_PATH at a local llm-d checkout") from exc

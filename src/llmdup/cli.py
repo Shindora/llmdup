@@ -1,8 +1,9 @@
 # Copyright 2026 The llmdup Authors
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import signal
 import sys
-from collections.abc import AsyncGenerator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator, Sequence
 from contextlib import aclosing, contextmanager
 from functools import singledispatch
 from typing import Annotated
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 
 from llmdup import __version__
 from llmdup.core import local as local_core
+from llmdup.core.detect import detect, pinned
 from llmdup.core.doctor import doctor as run_doctor
 from llmdup.core.guides import catalog
 from llmdup.core.kube import Kube
@@ -38,7 +40,7 @@ from llmdup.core.models import (
     VersionInfo,
     WaitProgress,
 )
-from llmdup.core.planner import build_plan
+from llmdup.core.planner import Detected, build_plan
 from llmdup.core.runner import Prepared, execute, prepare_recorded, prepare_up
 from llmdup.core.status import status as run_status
 from llmdup.core.upstream import DEFAULT_LLMD_REF
@@ -152,7 +154,34 @@ def _(item: StatusReport) -> None:
 
 
 def _kube(ctx: typer.Context, context: str | None) -> Kube:
-    return Kube(context=context or (ctx.obj or {}).get("context"))
+    return asyncio.run(pinned(Kube(context=context or (ctx.obj or {}).get("context"))))
+
+
+def _given_context(ctx: typer.Context, context: str | None) -> str | None:
+    return context or (ctx.obj or {}).get("context")
+
+
+def _detected(context: str) -> Detected:
+    facts = asyncio.run(detect(Kube(context=context), timeout=10))
+    return Detected(accelerator=facts.accelerator, provider=facts.provider)
+
+
+def _arun[T](coro: Coroutine[object, object, T]) -> T:
+    """Run a coroutine; SIGTERM and SIGHUP cancel it, so a running step is killed instead of orphaned."""
+
+    async def main() -> T:
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        if task is not None:
+            for sig in (signal.SIGTERM, signal.SIGHUP):
+                loop.add_signal_handler(sig, task.cancel)
+        return await coro
+
+    try:
+        return asyncio.run(main())
+    except asyncio.CancelledError as exc:
+        msg = "interrupted; the running step was stopped"
+        raise LlmdupError(msg, hint="`llmdup status` shows what was deployed so far") from exc
 
 
 def _ref(ctx: typer.Context, value: str | None) -> str:
@@ -182,6 +211,15 @@ def _handled(command: str, *, json_out: bool) -> Generator[None]:
             if error.hint:
                 typer.echo(f"hint: {error.hint}", err=True)
         raise typer.Exit(int(error.exit_code)) from error
+    except typer.Exit, typer.Abort:
+        raise
+    except Exception as error:
+        if json_out:
+            info = ErrorInfo(code="internal", message=f"{type(error).__name__}: {error}")
+            typer.echo(Envelope(ok=False, command=command, errors=[info]).model_dump_json())
+        else:
+            typer.echo(f"error: {type(error).__name__}: {error}", err=True)
+        raise typer.Exit(int(ExitCode.STEP_FAILED)) from error
 
 
 def _pairs(items: Sequence[str] | None, flag: str) -> dict[str, str]:
@@ -223,11 +261,14 @@ def guides_list(
     ctx: typer.Context,
     section: Annotated[str | None, typer.Option("--section", help="Only guides of this section.")] = None,
     json_out: JsonOpt = False,
+    context: ContextOpt = None,
     llmd_ref: RefOpt = None,
 ) -> None:
-    """List the guides with their section, modes and support."""
+    """List the guides with their section, modes and support (for the detected accelerator when --context is given)."""
     with _handled("guides list", json_out=json_out):
-        rows = [r for r in catalog(_ref(ctx, llmd_ref)).summaries() if section in {None, r.section}]
+        given = _given_context(ctx, context)
+        accelerator = _detected(given).accelerator if given else None
+        rows = [r for r in catalog(_ref(ctx, llmd_ref)).summaries(accelerator) if section in {None, r.section}]
         data = GuideList(guides=rows)
 
         def human() -> None:
@@ -291,12 +332,18 @@ def plan(
     options: OptionOpt = None,
     script: Annotated[bool, typer.Option("--script", help="Print the plan as one bash script.")] = False,
     json_out: JsonOpt = False,
+    context: ContextOpt = None,
     llmd_ref: RefOpt = None,
 ) -> None:
-    """Print the ordered steps of a deploy; run nothing."""
+    """Print the ordered steps of a deploy; run nothing. With --context, unset choices come from detection first."""
     with _handled("plan", json_out=json_out):
+        if script and json_out:
+            msg = "--script and --json cannot be combined; the JSON plan already holds every step's script"
+            raise UsageError(msg)
         flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
-        result = build_plan(_choices(guide, flags, sets, options), ref=_ref(ctx, llmd_ref))
+        given = _given_context(ctx, context)
+        detected = _detected(given) if given else None
+        result = build_plan(_choices(guide, flags, sets, options), ref=_ref(ctx, llmd_ref), detected=detected)
         if script:
             typer.echo(result.script, nl=False)
             return
@@ -410,14 +457,14 @@ def up(
         flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
         kube = _kube(ctx, context)
         choices = _choices(guide, flags, sets, options)
-        prepared = asyncio.run(prepare_up(kube, choices, ref=_ref(ctx, llmd_ref), verify=not no_verify, gate=not dry_run))
+        prepared = _arun(prepare_up(kube, choices, ref=_ref(ctx, llmd_ref), verify=not no_verify, gate=not dry_run))
         if dry_run:
             if json_out:
                 typer.echo(Envelope(ok=True, command="up", data=_dump(prepared)).model_dump_json())
             else:
                 typer.echo(prepared.plan.script, nl=False)
             return
-        final = asyncio.run(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
+        final = _arun(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
     _finish("up", final, json_out=json_out)
 
 
@@ -448,6 +495,7 @@ def status(
 def rerun_tests(
     ctx: typer.Context,
     namespace: NamespaceOpt = None,
+    yes: YesOpt = False,
     timeout: TimeoutOpt = 600,
     json_out: JsonOpt = False,
     context: ContextOpt = None,
@@ -455,8 +503,8 @@ def rerun_tests(
     """Run the guide's verify.tests steps again against a deployed stack."""
     with _handled("test", json_out=json_out):
         kube = _kube(ctx, context)
-        prepared = asyncio.run(prepare_recorded(kube, Action.TEST, namespace))
-        final = asyncio.run(_run(kube, prepared, yes=True, json_out=json_out, timeout=timeout))
+        prepared = _arun(prepare_recorded(kube, Action.TEST, namespace))
+        final = _arun(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
     _finish("test", final, json_out=json_out)
 
 
@@ -473,8 +521,8 @@ def down(
     """Tear a stack down with the guide's cleanup steps."""
     with _handled("down", json_out=json_out):
         kube = _kube(ctx, context)
-        prepared = asyncio.run(prepare_recorded(kube, Action.DOWN, namespace, keep_namespace=keep_namespace))
-        final = asyncio.run(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
+        prepared = _arun(prepare_recorded(kube, Action.DOWN, namespace, keep_namespace=keep_namespace))
+        final = _arun(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
     _finish("down", final, json_out=json_out)
 
 
@@ -492,13 +540,10 @@ def local_up(
         async def flow() -> RunFinished:
             async for event in local_core.create_cluster(kube):
                 render(event)
-                if isinstance(event, StepFinished) and not event.ok:
-                    msg = "kind create cluster failed"
-                    raise LlmdupError(msg, hint="is Docker or Podman running? For Podman set KIND_EXPERIMENTAL_PROVIDER=podman")
-            prepared = await prepare_up(kube, local_core.local_choices(), verify=not no_verify)
+            prepared = await local_core.prepare_local(kube, verify=not no_verify)
             return await _run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout)
 
-        final = asyncio.run(flow())
+        final = _arun(flow())
     _finish("local up", final, json_out=json_out)
 
 
@@ -508,7 +553,7 @@ def local_down(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
     with _handled("local down", json_out=json_out):
         if not yes and sys.stdin.isatty():
             yes = typer.confirm(f"Delete the kind cluster {local_core.CLUSTER}?", default=False, err=True)
-        final = asyncio.run(_drive(local_core.delete_cluster(local_core.local_kube(), confirmed=yes), json_out=json_out))
+        final = _arun(_drive(local_core.delete_cluster(local_core.local_kube(), confirmed=yes), json_out=json_out))
     _finish("local down", final, json_out=json_out)
 
 

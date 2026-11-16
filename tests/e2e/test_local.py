@@ -95,14 +95,16 @@ def test_down_leaves_nothing() -> None:
     assert _status()["stacks"] == []
 
 
-def test_killed_deploy_is_partial_and_down_cleans_it() -> None:
+def test_interrupted_deploy_is_partial_and_down_cleans_it() -> None:
     proc = subprocess.Popen([LLMDUP, "local", "up", "--yes"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert proc.stdout is not None
     for line in proc.stdout:
         if "local.router_small" in line:
             break
-    proc.send_signal(signal.SIGKILL)
-    proc.wait()
+    proc.send_signal(signal.SIGTERM)
+    rest = proc.communicate(timeout=60)[0]
+    assert proc.returncode == 1, rest
+    assert "interrupted" in rest
     (stack,) = _status()["stacks"]
     assert stack["health"] == "partial"
     assert stack["phase"] == "deploying"

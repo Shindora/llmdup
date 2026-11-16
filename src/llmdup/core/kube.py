@@ -83,6 +83,7 @@ class Kube:
     def process_env(self, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         """Return the environment for a child process."""
         env = {**os.environ, **self.env, **(extra or {})}
+        env.pop("LLMDUP_CONTEXT", None)
         if self.context:
             env["LLMDUP_CONTEXT"] = self.context
         return env

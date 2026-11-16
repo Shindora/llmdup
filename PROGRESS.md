@@ -117,6 +117,25 @@ Notes:
 - `up` and `down` return `Prepared | RunFinished`, which the SDK wraps as `{"result": ...}`. In MCP, `up` needs `confirm: true` even when no step is cluster-scoped, because it creates resources; without it `confirm` lists every step's command.
 - "Calling `up` without `confirm` changes nothing" is tested with a recording fake: every command it ran is a read (`kubectl version/get/config/kustomize`, `helm list`), and no bash step ran.
 
+## Review fixes (Opus review of Phases 0-3 and 5)
+
+An Opus reviewer read Phases 0-3 and 5 and reported 4 high, 8 medium and 11 low findings. All were fixed:
+
+- Steps whose commands create or delete cluster-scoped objects (`clusterrole`, CRDs) are tagged cluster-scoped wherever they sit, not only under `prerequisites`. That catches `verify.tests.metrics_rbac` (flow-control, turn-priority-fairness, precise-prefix-cache-routing) and the FMA deploy steps. `llmdup test` needs `--yes` for them; MCP `test` returns a preview without `confirm: true`.
+- The kube context is resolved once per command and pinned (`--context` on every kubectl, helm and bash step), so switching context mid-run cannot redirect it. MCP `up`, `down` and `test` with `confirm: true` require `kube_context`, which the preview returns as `context`.
+- Teardown treats the namespace as gone only on NotFound. Any other lookup failure, or a failed Helm or pod query, counts as left behind, and the state is kept.
+- A failed state query is an error, not "nothing deployed".
+- `--keep-namespace` works for single-step cleanups and refuses a step that deletes the namespace together with other commands. Manual options need two or more `when`-less siblings including `standard`; `--option` is validated.
+- SIGTERM and SIGHUP cancel the run, so the running step is killed instead of orphaned; state stays `deploying` (partial). The e2e test now interrupts with SIGTERM.
+- Steps run in a fresh temporary directory, never the user's cwd.
+- `plan` and `guides list` detect the cluster when `--context` is given; without it they use the guide's defaults and need no cluster.
+- Every failure, expected or not, prints one JSON envelope with `--json`. An unknown `--llmd-ref` exits 2. The v1.0.0 tarball's commit is checked (`378b42d`).
+- Confirmation shows the kube context, namespace and commands with the plan's variables filled in.
+- Doctor fails when the namespace already holds an llmdup stack (guides do not stack), and warns when CRDs or Helm releases cannot be listed.
+- Readiness waits only for the guide's model-server pods and the router release's pods; with no verify step it waits at the end.
+- All of a guide's `sensitive` variables, plus `HF_TOKEN`, are redacted from logs and refused by `--set`.
+- `mcp>=2.3`; NOTICE lists the rendered GPU overlay fixture; the local-profile flow moved from cli.py into `core/local.py`; MCP `doctor` takes the same choices as `up`.
+
 ## Phase 6: Real clusters and release
 - [ ] Gateway mode, and every accelerator and engine the guide's matrix allows
 - [ ] README: install, a local demo, screenshots of the UI, and the command reference

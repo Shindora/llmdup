@@ -7,7 +7,7 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from llmdup.core.guides import Catalog, GuideEntry, catalog, modes_of, static_tags, step_lists
+from llmdup.core.guides import DEFAULT_OPTION, Catalog, GuideEntry, catalog, manual_options, modes_of, static_tags, step_lists
 from llmdup.core.models import (
     Action,
     Choices,
@@ -35,7 +35,7 @@ ACTION_SECTIONS = {
     Action.TEST: ("verify",),
     Action.DOWN: ("cleanup",),
 }
-DEFAULT_OPTION = "standard"
+SECRET_NAMES = frozenset({"HF_TOKEN"})
 LOCAL_PROFILE = Path(__file__).parents[1] / "local_profile"
 LOCAL_GUIDE = "optimized-baseline"
 SIM_MODEL = "llmdup-sim"
@@ -89,7 +89,7 @@ def resolve_variables(info: GuideInfo, choices: Choices, detected: Detected | No
         if name not in declared:
             msg = f"{info.name} declares no variable {name!r}"
             raise UsageError(msg, hint=f"variables: {', '.join(declared)}")
-        if declared[name].sensitive:
+        if declared[name].sensitive or name in SECRET_NAMES:
             msg = f"{name} is sensitive; llmdup reads it from the environment only"
             raise UsageError(msg, hint=f"export {name} before running llmdup")
         resolved.put(name, value, VariableSource.FLAG)
@@ -146,6 +146,7 @@ class _Builder:
         self.mode = mode
         self.overrides = overrides
         self.modes = modes_of(entry.guide.data)
+        self.manual = manual_options(entry.guide.data, self.modes)
         self.steps: list[Step] = []
         self.skipped: list[SkippedStep] = []
         self.tests_seen = False
@@ -220,22 +221,53 @@ def build_plan(
     resolved = resolve_variables(info, choices, detected)
     overrides = {**resolved.overrides, "REPO_ROOT": str(found.release.path)}
     builder = _Builder(found, entry, choices, mode, overrides)
+    _check_options(builder.manual, choices.options)
     for path, node in step_lists(entry.guide.data, ACTION_SECTIONS[action]):
-        tags = static_tags(path, node, builder.modes)
+        tags = static_tags(path, node, builder.modes, builder.manual)
         if not verify and StepTag.SENDS_TRAFFIC in tags:
             builder.skipped.append(SkippedStep(path=path, reason="--no-verify"))
             continue
-        if action is Action.DOWN and isinstance(node, list) and len(node) > 1:
-            for i, item in enumerate(node):
-                if keep_namespace and _deletes_namespace(item):
-                    builder.skipped.append(SkippedStep(path=f"{path}[{i}]", reason="--keep-namespace"))
-                else:
-                    builder.add(f"{path}[{i}]", tags, action)
+        if action is Action.DOWN:
+            _add_cleanup(builder, path, node, tags, keep_namespace=keep_namespace)
             continue
         builder.add(path, tags, action)
     if choices.profile is Profile.LOCAL:
         _apply_local_profile(builder, action)
     return _finish(found, info, choices, action, mode, resolved, builder)
+
+
+def _check_options(manual: set[str], options: dict[str, str]) -> None:
+    groups: dict[str, set[str]] = {}
+    for path in manual:
+        parts = path.split(".")
+        groups.setdefault(".".join(parts[1:-1]), set()).add(parts[-1])
+    for group, choice in options.items():
+        if group not in groups:
+            msg = f"no manual option group {group!r}"
+            raise UsageError(msg, hint=f"groups: {', '.join(sorted(groups)) or 'none'}")
+        if choice not in groups[group]:
+            msg = f"option {group}={choice} is not one of the guide's choices"
+            raise UsageError(msg, hint=f"choices: {', '.join(sorted(groups[group]))}")
+
+
+def _add_cleanup(builder: _Builder, path: str, node: object, tags: list[StepTag], *, keep_namespace: bool) -> None:
+    items = node if isinstance(node, list) else [node]
+    for i, item in enumerate(items):
+        item_path = f"{path}[{i}]" if isinstance(node, list) and len(node) > 1 else path
+        if keep_namespace and _deletes_namespace(item):
+            if _command_lines(item) > 1:
+                msg = f"{item_path} deletes the namespace together with other commands, so --keep-namespace cannot skip it alone"
+                raise UsageError(msg, hint="tear down without --keep-namespace")
+            builder.skipped.append(SkippedStep(path=item_path, reason="--keep-namespace"))
+        elif len(items) > 1:
+            builder.add(item_path, tags, Action.DOWN)
+    if len(items) == 1 and not (keep_namespace and _deletes_namespace(items[0])):
+        builder.add(path, tags, Action.DOWN)
+
+
+def _command_lines(step: object) -> int:
+    run = str(step.get("run", "")) if isinstance(step, dict) else ""
+    return sum(1 for line in run.splitlines() if line.strip() and not line.strip().startswith("#") and not line.rstrip().endswith("\\"))
 
 
 def _base(path: str) -> str:

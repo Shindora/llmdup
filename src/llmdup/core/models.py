@@ -265,6 +265,7 @@ class ClusterFacts(BaseModel):
     gateway_classes: list[str] = Field(default_factory=list)
     crds: list[str] = Field(default_factory=list)
     helm_releases: list[HelmRelease] = Field(default_factory=list)
+    unknown: list[str] = Field(default_factory=list)
 
 
 class CheckStatus(StrEnum):

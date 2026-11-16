@@ -15,6 +15,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel
 
 from llmdup import __version__
+from llmdup.core.detect import detect, pinned
 from llmdup.core.doctor import doctor as core_doctor
 from llmdup.core.guides import catalog
 from llmdup.core.kube import Kube
@@ -32,19 +33,21 @@ from llmdup.core.models import (
     StatusReport,
     StepFinished,
     StepStarted,
+    UsageError,
     WaitProgress,
 )
-from llmdup.core.planner import build_plan
-from llmdup.core.runner import Prepared, execute, prepare_recorded, prepare_up
+from llmdup.core.planner import Detected, build_plan
+from llmdup.core.runner import Prepared, confirm_commands, execute, prepare_recorded, prepare_up
 from llmdup.core.status import status as core_status
 from llmdup.core.upstream import DEFAULT_LLMD_REF
 
 INSTRUCTIONS = """\
 llmdup deploys llm-d guides (pinned llm-d release) to Kubernetes.
 Typical flow: list_guides, show_guide, doctor, plan, up, status, test, down.
-`up` and `down` change the cluster. Call them without `confirm` first: they return the plan and the exact
-commands that need confirmation, and change nothing. Show those commands to the user, and call again with
-`confirm: true` only after the user agrees. HF_TOKEN is read from the server's environment, never passed in.
+`up` and `down` change the cluster. Call them without `confirm` first: they return the plan, the kube `context`
+and the exact commands, and change nothing. Show those to the user, and call again with `confirm: true` and
+`kube_context` set to that `context` only after the user agrees. `test` returns the same preview when its tests
+create cluster-scoped objects. HF_TOKEN is read from the server's environment, never passed in.
 """
 
 
@@ -166,6 +169,17 @@ class Tools:
     def __init__(self, kube_factory: Callable[..., Kube] = Kube) -> None:
         self.kube_factory = kube_factory
 
+    async def kube(self, kube_context: str | None, *, confirm: bool = False) -> Kube:
+        """Return a runner pinned to `kube_context`, or to the current context resolved once.
+
+        Raises:
+            UsageError: A confirmed change names no context, so it could land on a different cluster than its preview.
+        """
+        if confirm and not kube_context:
+            msg = "confirm: true needs kube_context"
+            raise UsageError(msg, hint="pass the `context` field of the preview you showed the user as kube_context")
+        return await pinned(self.kube_factory(context=kube_context))
+
     def list_guides(self, *, section: str | None = None, llmd_ref: str = DEFAULT_LLMD_REF) -> GuideList:
         """List the guides of the pinned llm-d release with section, modes and support."""
         rows = catalog(llmd_ref).summaries()
@@ -181,16 +195,20 @@ class Tools:
         guide: str | None = None,
         accelerator: str | None = None,
         engine: str | None = None,
+        provider: str | None = None,
         mode: str | None = None,
         namespace: str | None = None,
+        model: str | None = None,
+        sets: dict[str, str] | None = None,
+        options: dict[str, str] | None = None,
         kube_context: str | None = None,
         llmd_ref: str = DEFAULT_LLMD_REF,
     ) -> DoctorReport:
-        """Run the preflight checks for the cluster, and for a guide when given. Read-only."""
-        choices = _choices(guide, accelerator, engine, None, mode, namespace, None, None, None) if guide else None
-        return await core_doctor(self.kube_factory(context=kube_context), choices, ref=llmd_ref)
+        """Run the preflight checks for the cluster, and for a guide with the same choices `up` takes. Read-only."""
+        choices = _choices(guide, accelerator, engine, provider, mode, namespace, model, sets, options) if guide else None
+        return await core_doctor(await self.kube(kube_context), choices, ref=llmd_ref)
 
-    def plan(
+    async def plan(
         self,
         guide: str,
         *,
@@ -202,10 +220,16 @@ class Tools:
         model: str | None = None,
         sets: dict[str, str] | None = None,
         options: dict[str, str] | None = None,
+        kube_context: str | None = None,
         llmd_ref: str = DEFAULT_LLMD_REF,
     ) -> Plan:
-        """Return the ordered steps and exact commands of a deploy. Runs nothing and needs no cluster."""
-        return build_plan(_choices(guide, accelerator, engine, provider, mode, namespace, model, sets, options), ref=llmd_ref)
+        """Return the ordered steps and exact commands of a deploy; runs nothing. With kube_context, unset choices come from detection."""
+        detected = None
+        if kube_context:
+            facts = await detect(await self.kube(kube_context), timeout=10)
+            detected = Detected(accelerator=facts.accelerator, provider=facts.provider)
+        choices = _choices(guide, accelerator, engine, provider, mode, namespace, model, sets, options)
+        return build_plan(choices, ref=llmd_ref, detected=detected)
 
     async def up(
         self,
@@ -226,29 +250,33 @@ class Tools:
         kube_context: str | None = None,
         llmd_ref: str = DEFAULT_LLMD_REF,
     ) -> Prepared | RunFinished:
-        """Deploy a guide. Without `confirm: true` it changes nothing and returns the plan, preflight report and commands to confirm."""
-        kube = self.kube_factory(context=kube_context)
+        """Deploy a guide. Without `confirm: true` it changes nothing and returns the plan, context, preflight report and commands."""
+        kube = await self.kube(kube_context, confirm=confirm)
         choices = _choices(guide, accelerator, engine, provider, mode, namespace, model, sets, options)
         prepared = await prepare_up(kube, choices, ref=llmd_ref, verify=verify, gate=confirm)
         if not confirm:
-            return prepared.model_copy(update={"confirm": [f"# {s.path}\n{s.command}" for s in prepared.plan.steps]})
+            every = confirm_commands(prepared.plan, kube.context, [s.path for s in prepared.plan.steps])
+            return prepared.model_copy(update={"confirm": every})
         return await _drive(execute(kube, prepared, confirmed=True, timeout=timeout), ctx)
 
     async def status(self, *, namespace: str | None = None, kube_context: str | None = None) -> StatusReport:
         """Show deployed stacks with their pods, endpoint and readiness. Read-only."""
-        return await core_status(self.kube_factory(context=kube_context), namespace)
+        return await core_status(await self.kube(kube_context), namespace)
 
     async def test(
         self,
         ctx: Context,
         *,
         namespace: str | None = None,
+        confirm: bool = False,
         timeout: float = 600,
         kube_context: str | None = None,
-    ) -> RunFinished:
-        """Run the guide's verify.tests steps against a deployed stack. Sends inference requests."""
-        kube = self.kube_factory(context=kube_context)
+    ) -> Prepared | RunFinished:
+        """Run the guide's verify.tests steps. Sends inference requests; tests with cluster-scoped steps need `confirm: true`."""
+        kube = await self.kube(kube_context, confirm=confirm)
         prepared = await prepare_recorded(kube, Action.TEST, namespace)
+        if prepared.confirm and not confirm:
+            return prepared
         return await _drive(execute(kube, prepared, confirmed=True, timeout=timeout), ctx)
 
     async def down(
@@ -261,8 +289,8 @@ class Tools:
         timeout: float = 900,
         kube_context: str | None = None,
     ) -> Prepared | RunFinished:
-        """Tear a stack down. Without `confirm: true` it deletes nothing and returns the plan and the commands to confirm."""
-        kube = self.kube_factory(context=kube_context)
+        """Tear a stack down. Without `confirm: true` it deletes nothing and returns the plan, context and commands to confirm."""
+        kube = await self.kube(kube_context, confirm=confirm)
         prepared = await prepare_recorded(kube, Action.DOWN, namespace, keep_namespace=keep_namespace)
         if not confirm:
             return prepared

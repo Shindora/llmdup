@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import dataclasses
 import json
 
 from llmdup.core.kube import Kube
@@ -115,6 +116,17 @@ async def current_context(kube: Kube) -> str | None:
     return (result.stdout.strip() or None) if result.ok else None
 
 
+async def pinned(kube: Kube) -> Kube:
+    """Return `kube` pinned to its context, resolving the kubeconfig's current context once.
+
+    Every later command of the run then targets that context, even if the user switches context meanwhile.
+    """
+    if kube.context:
+        return kube
+    found = await current_context(kube)
+    return dataclasses.replace(kube, context=found) if found else kube
+
+
 async def detect(kube: Kube, *, timeout: float = 20) -> ClusterFacts:
     """Collect context, version, CRDs, Helm releases, provider and accelerators.
 
@@ -144,6 +156,7 @@ async def detect(kube: Kube, *, timeout: float = 20) -> ClusterFacts:
     facts.crds = _names(crds.result())
     facts.helm_releases = read_helm(helm.result())
     facts.gateway_classes = _names(gateways.result())
+    facts.unknown = [name for name, task in (("nodes", nodes), ("crds", crds), ("helm", helm)) if task.result() is None]
     return facts
 
 
