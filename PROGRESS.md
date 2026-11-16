@@ -17,19 +17,27 @@ Done when:
 Notes: type checker is `ty` (user request) instead of mypy. Typer cannot read PEP 695 `type` aliases, so CLI option aliases are plain `Annotated` assignments.
 
 ## Phase 1: Guides and plan, no cluster
-- [ ] `upstream.py`: download `https://codeload.github.com/llm-d/llm-d/tar.gz/refs/tags/<ref>` into the cache, unpack it safely, and record the ref and commit
-- [ ] Honour `LLMDUP_LLMD_PATH` to use a local llm-d checkout instead of downloading
-- [ ] Commit a trimmed fixture under `tests/fixtures/llm-d-v1.0.0/`: `scripts/guide.py`, `guides/env.sh`, `docs/well-lit-paths/guides.yaml`, `guides/recipes/`, and the guides `optimized-baseline`, `flow-control` and `pd-disaggregation`
-- [ ] `guides.py`: import the checkout's `guide.py`, then build a `GuideInfo` with name, title, section, modes, variables, allowed values and the support matrix
-- [ ] `planner.py`: build a `Plan` of ordered `Step`s, each with its path, tags and emitted script; drop steps whose script is empty after filtering
-- [ ] CLI: `guides list`, `guides show` and `plan`, with `--json` and `--script`
+- [x] `upstream.py`: download `https://codeload.github.com/llm-d/llm-d/tar.gz/refs/tags/<ref>` into the cache, unpack it safely, and record the ref and commit
+- [x] Honour `LLMDUP_LLMD_PATH` to use a local llm-d checkout instead of downloading
+- [x] Commit a trimmed fixture under `tests/fixtures/llm-d-v1.0.0/`: `scripts/guide.py`, `guides/env.sh`, `docs/well-lit-paths/guides.yaml`, `guides/recipes/`, and the guides `optimized-baseline`, `flow-control` and `pd-disaggregation`
+- [x] `guides.py`: import the checkout's `guide.py`, then build a `GuideInfo` with name, title, section, modes, variables, allowed values and the support matrix
+- [x] `planner.py`: build a `Plan` of ordered `Step`s, each with its path, tags and emitted script; drop steps whose script is empty after filtering
+- [x] CLI: `guides list`, `guides show` and `plan`, with `--json` and `--script`
 
 Done when:
 
-- [ ] A network-marked test loads the real `v1.0.0` release and builds a default plan for all 27 guides without an error.
-- [ ] `llmdup plan optimized-baseline --accelerator gpu --json` lists exactly these steps in order: `prerequisites.gaie`, `prerequisites.namespace`, `prerequisites.secrets`, `deploy.router_values`, `deploy.standalone`, `deploy.modelserver.standard`, `verify.endpoint.standalone`, `verify.tests.request`.
-- [ ] `llmdup plan optimized-baseline --accelerator bogus` exits with code 2 and prints the allowed values.
-- [ ] The output of `plan --script` passes `bash -n`.
+- [x] A network-marked test loads the real `v1.0.0` release and builds a default plan for all 27 guides without an error.
+- [x] `llmdup plan optimized-baseline --accelerator gpu --json` lists exactly these steps in order: `prerequisites.gaie`, `prerequisites.namespace`, `prerequisites.secrets`, `deploy.router_values`, `deploy.standalone`, `deploy.modelserver.standard`, `verify.endpoint.standalone`, `verify.tests.request`.
+- [x] `llmdup plan optimized-baseline --accelerator bogus` exits with code 2 and prints the allowed values.
+- [x] The output of `plan --script` passes `bash -n`.
+
+Notes, where upstream differs from PLAN.md:
+
+- `discover_modes` and `support_status` are not in `guide.py`'s `__all__` (it exports `Finding`, `Findings`, `Guide`, `GuideError`, `emit_script`, `parse_guide_yaml`), so modes and support are computed from `Guide.data` (rule 3).
+- `turn-priority-fairness` and `workload-autoscaling/wva` have a `guide.yaml` but are not in `docs/well-lit-paths/guides.yaml`; they show under section `unlisted`.
+- Each step is emitted on its own with `Guide.emit([path])`; the `env` section is emitted once and runs first, so exports from one step (for example `ROUTER_VALUES`) carry into later steps.
+- Manual options are picked with `--option GROUP=CHOICE`, for example `--option modelserver=dynamic_slice`; `standard` is the default.
+- `--set` refuses sensitive variables (such as `HF_TOKEN`); they come from the environment only.
 
 ## Phase 2: Detect and doctor
 - [ ] `kube.py`: one wrapper that runs `kubectl`, `helm`, `kind` and `bash` with a timeout and captured output, plus a fake for tests
