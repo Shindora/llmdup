@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --python 3.14
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.14", "3.15", "3.14t"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --python ${{ matrix.python }}
+      - run: uv run pytest
+
+  upstream:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --python 3.14
+      - run: uv run pytest -m network
+
+  e2e:
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+      - uses: azure/setup-helm@v4
+      - run: uv sync --python 3.14
+      - run: uv run pytest -m e2e -x -v

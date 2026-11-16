@@ -1,0 +1,81 @@
+[project]
+name = "llmdup"
+version = "0.1.0"
+description = "From a Kubernetes cluster to a working llm-d endpoint: a terminal UI for people, a JSON CLI and an MCP server for agents."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.14"
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "mcp>=1.20",
+    "pydantic>=2.12",
+    "pyyaml>=6.0.3",
+    "textual>=8.2",
+    "typer>=0.24",
+]
+
+[project.scripts]
+llmdup = "llmdup.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2",
+    "pytest-textual-snapshot>=1.0",
+    "ruff>=0.17",
+    "ty>=0.0.104",
+    "types-pyyaml>=6.0.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not network and not e2e'"
+markers = [
+    "network: downloads the real llm-d release",
+    "e2e: needs Docker or Podman, kind, kubectl and helm",
+]
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+include = ["src", "tests"]
+exclude = ["tests/fixtures"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py314"
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+preview = true
+select = [
+    "E", "W", "F", "I", "D", "DOC", "UP", "ANN", "B", "N", "C90", "S", "AIR", "ERA", "FAST", "ASYNC", "BLE", "FBT",
+    "COM", "C4", "CPY", "DTZ", "T10", "EM", "EXE", "FIX", "ICN", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "SLF",
+    "SIM", "ARG", "PTH", "FLY", "PERF", "RUF",
+]
+ignore = ["undocumented-public-module", "undocumented-public-package", "undocumented-magic-method", "undocumented-public-init", "missing-trailing-comma"]
+
+[tool.ruff.lint.flake8-copyright]
+min-file-size = 1
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["assert", "D", "ANN", "implicit-namespace-package", "private-member-access", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+"src/llmdup/core/kube.py" = ["subprocess-without-shell-equals-true"]
+"src/llmdup/cli.py" = ["docstring-missing-exception", "boolean-type-hint-positional-argument", "boolean-default-value-positional-argument", "function-call-in-default-argument"]

@@ -1,0 +1,95 @@
+# Progress
+
+Phase checklist from PLAN.md. Updated after every phase.
+
+## Phase 0: Scaffold
+- [x] Create the repo layout above as a `uv` project with a `src/` layout and the entry point `llmdup = llmdup.cli:app`
+- [x] Add Typer, Pydantic, PyYAML, Textual and the MCP Python SDK; for development add pytest, ruff, a type checker and Textual's snapshot plugin
+- [x] Implement `llmdup version` with `--json`
+- [x] Set `requires-python` to 3.14 or newer. Add GitHub Actions for lint, types and tests on Python 3.14, on 3.15, and on the free-threaded build 3.14t
+- [x] Add `LICENSE` (Apache-2.0), `NOTICE`, a README stub, `CLAUDE.md` and `PROGRESS.md`
+
+Done when:
+
+- [x] `uv run llmdup version --json` prints the JSON envelope.
+- [x] Lint, type check and `pytest` pass locally (3.14, 3.14t, 3.15.0rc2). CI: workflow added; not run yet because the repo has no GitHub remote.
+
+Notes: type checker is `ty` (user request) instead of mypy. Typer cannot read PEP 695 `type` aliases, so CLI option aliases are plain `Annotated` assignments.
+
+## Phase 1: Guides and plan, no cluster
+- [ ] `upstream.py`: download `https://codeload.github.com/llm-d/llm-d/tar.gz/refs/tags/<ref>` into the cache, unpack it safely, and record the ref and commit
+- [ ] Honour `LLMDUP_LLMD_PATH` to use a local llm-d checkout instead of downloading
+- [ ] Commit a trimmed fixture under `tests/fixtures/llm-d-v1.0.0/`: `scripts/guide.py`, `guides/env.sh`, `docs/well-lit-paths/guides.yaml`, `guides/recipes/`, and the guides `optimized-baseline`, `flow-control` and `pd-disaggregation`
+- [ ] `guides.py`: import the checkout's `guide.py`, then build a `GuideInfo` with name, title, section, modes, variables, allowed values and the support matrix
+- [ ] `planner.py`: build a `Plan` of ordered `Step`s, each with its path, tags and emitted script; drop steps whose script is empty after filtering
+- [ ] CLI: `guides list`, `guides show` and `plan`, with `--json` and `--script`
+
+Done when:
+
+- [ ] A network-marked test loads the real `v1.0.0` release and builds a default plan for all 27 guides without an error.
+- [ ] `llmdup plan optimized-baseline --accelerator gpu --json` lists exactly these steps in order: `prerequisites.gaie`, `prerequisites.namespace`, `prerequisites.secrets`, `deploy.router_values`, `deploy.standalone`, `deploy.modelserver.standard`, `verify.endpoint.standalone`, `verify.tests.request`.
+- [ ] `llmdup plan optimized-baseline --accelerator bogus` exits with code 2 and prints the allowed values.
+- [ ] The output of `plan --script` passes `bash -n`.
+
+## Phase 2: Detect and doctor
+- [ ] `kube.py`: one wrapper that runs `kubectl`, `helm`, `kind` and `bash` with a timeout and captured output, plus a fake for tests
+- [ ] `detect.py`: context, server version, installed CRDs, existing Helm releases, provider (`gke` when nodes carry `cloud.google.com/gke-nodepool`)
+- [ ] `detect.py`: map allocatable resources and DeviceClasses to `ACCELERATOR_TYPE`, using the table in step 3 of the upstream `deploy-llm-d` skill
+- [ ] `doctor.py`: the checks in the table below, each returning ok, warn or fail with `found` and `fix`
+- [ ] CLI: `doctor`, exit code 3 when any check fails
+
+Done when:
+
+- [ ] Unit tests with recorded `kubectl -o json` output cover a GPU cluster, a CPU-only cluster and an unreachable cluster.
+- [ ] `llmdup doctor optimized-baseline --json` on a fresh kind cluster reports the CRD warning and no accelerator.
+
+## Phase 3: Local profile, up, status, down
+- [ ] `local.py`: `local up` creates a kind cluster named `llmdup` when it is missing; `local down` deletes it
+- [ ] `local_profile/sim-overlay`: two replicas of `ghcr.io/llm-d/llm-d-inference-sim`, labelled `llm-d.ai/guide: optimized-baseline`; read the simulator's README and `manifests/deployment.yaml` for its flags and current tag
+- [ ] `local_profile/router-small.values.yaml`: lower the router's CPU and memory requests so it fits a laptop
+- [ ] Local plan: the `optimized-baseline` plan in standalone mode, with the model server step replaced by the simulator overlay and the small values applied after the router install
+- [ ] `runner.py`: run steps, yield events, wait for readiness, stop at the first failure and report the failing command with its last 40 log lines
+- [ ] `state.py` and `status.py`, then CLI `up`, `status`, `test` and `down`
+- [ ] Confirmation for cluster-scoped steps and for `down`
+
+Done when:
+
+- [ ] `llmdup local up --yes` ends with an HTTP 200 from `/v1/completions` through the router.
+- [ ] `llmdup status --json` shows the router and two simulator pods ready, and the endpoint.
+- [ ] After `llmdup down --yes`, `llmdup status` shows nothing deployed.
+- [ ] After a step is killed mid-run, `status` reports a partial deploy and `down` cleans it up.
+- [ ] The end-to-end job passes in CI.
+
+## Phase 4: Terminal UI
+- [ ] Read the current Textual docs for screens, tables, inputs, logs, workers and testing before writing code
+- [ ] `tui/keys.py`, the header with generated hints, the breadcrumb line, and the prompt with command and filter modes, suggestions and history
+- [ ] The seven views in the Terminal UI section
+- [ ] View history, filtering and sorting as listed under "Keys in every view"
+- [ ] The confirm dialog, and a worker that turns runner events into step progress and log lines
+- [ ] A fake core for tests, so UI tests need no cluster
+
+Done when:
+
+- [ ] Pilot tests open every view by key and by command, and typing `/cache` leaves only rows that contain `cache`.
+- [ ] A test asserts that every binding in `keys.py` appears in the help view.
+- [ ] Snapshot tests cover all seven views at 120 by 36, and the guides view at 100 by 30.
+- [ ] With the local profile, a person can plan, deploy, open the stack, send a test request and tear down without leaving the UI.
+
+## Phase 5: MCP server and skill
+- [ ] `mcp_server.py` with the tools `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test` and `down`
+- [ ] `up` and `down` require `confirm: true`; without it they return the plan and what needs confirmation
+- [ ] Tool results are the same Pydantic models as the CLI's `data` field
+- [ ] `skills/llmdup/SKILL.md`: when to use llmdup, the commands, the exit codes, and the rule to tell the user what will be created before passing `--yes`
+
+Done when:
+
+- [ ] An MCP client test lists the eight tools and calls `plan`.
+- [ ] Calling `up` without `confirm` changes nothing in the cluster.
+
+## Phase 6: Real clusters and release
+- [ ] Gateway mode, and every accelerator and engine the guide's matrix allows
+- [ ] README: install, a local demo, screenshots of the UI, and the command reference
+- [ ] Publish 0.1.0 to PyPI after the name check
+
+Done when:
+
