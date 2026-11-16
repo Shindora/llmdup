@@ -114,6 +114,7 @@ Notes, where the UI differs from PLAN.md or adds to it:
 - `llmdup` with no arguments opens the UI when stdin and stdout are both terminals, else prints help.
 - Core additions, read-only: `status.pod_log`, `status.model_metrics`, `status.contexts`, and the models `PodLog`, `PodMetrics`, `MetricsReport`.
 - Snapshots are SVG files that syrupy 7 stores as `tests/tui/__snapshots__/test_snapshots/*.raw`; a test checks that none holds a token.
+- Built by an Opus worker on branch `llmdup-tui`, merged into `main` after the review fixes. On the merged tree: ruff, ty, 127 offline tests (10 snapshots) and all 6 e2e tests (5 CLI, 1 UI) pass on kind-llmdup.
 
 ## Phase 5: MCP server and skill
 - [x] `mcp_server.py` with the tools `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test` and `down`
