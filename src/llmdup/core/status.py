@@ -6,11 +6,14 @@ import asyncio
 from llmdup.core import state as state_store
 from llmdup.core.detect import current_context, read_helm
 from llmdup.core.kube import Kube
-from llmdup.core.models import PodStatus, StackPhase, StackState, StackStatus, StatusReport
+from llmdup.core.models import MetricsReport, PodLog, PodMetrics, PodStatus, StackPhase, StackState, StackStatus, StatusReport
 
 GUIDE_POD_LABEL = "llm-d.ai/guide"
 GATEWAY_NAME = "llm-d-inference-gateway"
 FINISHED_PHASES = frozenset({"Succeeded", "Failed"})
+LOG_TAIL = 500
+MODEL_PORT = 8000
+METRIC_PREFIXES = ("vllm:", "sglang:")
 
 
 def pod_ready(pod: object) -> bool:
@@ -129,3 +132,46 @@ async def status(kube: Kube, namespace: str | None = None) -> StatusReport:
     async with asyncio.TaskGroup() as tg:
         tasks = [tg.create_task(stack_status(kube, s)) for s in states]
     return StatusReport(context=await current_context(kube), stacks=[t.result() for t in tasks])
+
+
+def _redact(lines: list[str]) -> list[str]:
+    from llmdup.core.runner import redact  # runner imports this module, so import late
+
+    return [redact(line) for line in lines]
+
+
+async def pod_log(kube: Kube, namespace: str, pod: str, *, tail: int = LOG_TAIL, timestamps: bool = False) -> PodLog:
+    """Read the last lines of every container's log in one pod, with secret values redacted."""
+    args = ["logs", pod, "-n", namespace, "--all-containers", f"--tail={tail}", *(["--timestamps"] if timestamps else [])]
+    result = await kube.run("kubectl", *args, timeout=30)
+    if not result.ok:
+        return PodLog(namespace=namespace, pod=pod, error=result.stderr.strip() or f"kubectl logs exited {result.returncode}")
+    return PodLog(namespace=namespace, pod=pod, lines=_redact(result.stdout.splitlines()))
+
+
+def metric_lines(text: str) -> list[str]:
+    """Keep the vLLM and SGLang sample lines of a Prometheus text exposition."""
+    return [line for line in text.splitlines() if line.startswith(METRIC_PREFIXES)]
+
+
+async def _pod_metrics(kube: Kube, namespace: str, pod: str) -> PodMetrics:
+    path = f"/api/v1/namespaces/{namespace}/pods/{pod}:{MODEL_PORT}/proxy/metrics"
+    result = await kube.run("kubectl", "get", "--raw", path, timeout=30)
+    if not result.ok:
+        return PodMetrics(pod=pod, error=result.stderr.strip() or f"kubectl get --raw exited {result.returncode}")
+    return PodMetrics(pod=pod, lines=metric_lines(result.stdout))
+
+
+async def model_metrics(kube: Kube, namespace: str) -> MetricsReport:
+    """Read the model-server metrics of every model-server pod, the way the guides' `pod_metrics` test does."""
+    doc = await kube.json("kubectl", "get", "pods", "-n", namespace, "-l", GUIDE_POD_LABEL, "-o", "json", timeout=30)
+    names = [p.name for p in pods(doc, "") if p.role == "model server"]
+    async with asyncio.TaskGroup() as tg:
+        tasks = [tg.create_task(_pod_metrics(kube, namespace, name)) for name in names]
+    return MetricsReport(namespace=namespace, pods=[t.result() for t in tasks])
+
+
+async def contexts(kube: Kube) -> list[str]:
+    """Return the context names in the kubeconfig."""
+    result = await kube.run("kubectl", "config", "get-contexts", "-o", "name", timeout=10)
+    return result.stdout.split() if result.ok else []
