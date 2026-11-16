@@ -12,7 +12,7 @@ Phase checklist from PLAN.md. Updated after every phase.
 Done when:
 
 - [x] `uv run llmdup version --json` prints the JSON envelope.
-- [x] Lint, type check and `pytest` pass locally (3.14, 3.14t, 3.15.0rc2). CI: workflow added; not run yet because the repo has no GitHub remote.
+- [x] Lint, type check and `pytest` pass locally (3.14, 3.14t, 3.15.0rc2) and in CI (GitHub Actions run 43902140537: lint, 3.14, 3.15, 3.14t).
 
 Notes: type checker is `ty` (user request) instead of mypy. Typer cannot read PEP 695 `type` aliases, so CLI option aliases are plain `Annotated` assignments.
 
@@ -73,7 +73,7 @@ Done when:
 - [x] `llmdup status --json` shows the router and two simulator pods ready, and the endpoint.
 - [x] After `llmdup down --yes`, `llmdup status` shows nothing deployed.
 - [x] After a step is killed mid-run, `status` reports a partial deploy and `down` cleans it up.
-- [ ] The end-to-end job passes in CI. Passes locally (`pytest -m e2e`, 5 tests, kind v1.37.0 on rootful Podman, 1m53s); the CI job is written but has not run because the repo has no GitHub remote.
+- [x] The end-to-end job passes in CI (run 43902140537), and locally (`pytest -m e2e`, kind v1.37.0 on rootful Podman). The first CI run showed that `kubectl run --rm -i` can drop the curl output of the guide's smoke test, so the e2e test reads step results from `--json` and proves the HTTP 200 through a port-forward.
 
 Notes:
 
