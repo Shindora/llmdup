@@ -510,3 +510,11 @@ def local_down(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
             yes = typer.confirm(f"Delete the kind cluster {local_core.CLUSTER}?", default=False, err=True)
         final = asyncio.run(_drive(local_core.delete_cluster(local_core.local_kube(), confirmed=yes), json_out=json_out))
     _finish("local down", final, json_out=json_out)
+
+
+@app.command()
+def mcp() -> None:
+    """Start the MCP server on stdio."""
+    from llmdup.mcp_server import build_server
+
+    build_server().run()

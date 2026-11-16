@@ -99,15 +99,23 @@ Done when:
 - [ ] With the local profile, a person can plan, deploy, open the stack, send a test request and tear down without leaving the UI.
 
 ## Phase 5: MCP server and skill
-- [ ] `mcp_server.py` with the tools `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test` and `down`
-- [ ] `up` and `down` require `confirm: true`; without it they return the plan and what needs confirmation
-- [ ] Tool results are the same Pydantic models as the CLI's `data` field
-- [ ] `skills/llmdup/SKILL.md`: when to use llmdup, the commands, the exit codes, and the rule to tell the user what will be created before passing `--yes`
+- [x] `mcp_server.py` with the tools `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test` and `down`
+- [x] `up` and `down` require `confirm: true`; without it they return the plan and what needs confirmation
+- [x] Tool results are the same Pydantic models as the CLI's `data` field
+- [x] `skills/llmdup/SKILL.md`: when to use llmdup, the commands, the exit codes, and the rule to tell the user what will be created before passing `--yes`
 
 Done when:
 
-- [ ] An MCP client test lists the eight tools and calls `plan`.
-- [ ] Calling `up` without `confirm` changes nothing in the cluster.
+- [x] An MCP client test lists the eight tools and calls `plan`.
+- [x] Calling `up` without `confirm` changes nothing in the cluster.
+
+Notes:
+
+- MCP Python SDK 2.3.0: `FastMCP` is now `mcp.server.MCPServer`; tests use the in-memory `Client(server)` and a stdio `Client(StdioServerParameters(command="llmdup", args=["mcp"]))`.
+- The SDK deprecates the logging capability (SEP-2577), so run events reach the client as progress notifications, one message per event via the MCP `render`.
+- Only `ToolError` text reaches the agent in SDK 2.x; llmdup errors are converted to it, with the hint.
+- `up` and `down` return `Prepared | RunFinished`, which the SDK wraps as `{"result": ...}`. In MCP, `up` needs `confirm: true` even when no step is cluster-scoped, because it creates resources; without it `confirm` lists every step's command.
+- "Calling `up` without `confirm` changes nothing" is tested with a recording fake: every command it ran is a read (`kubectl version/get/config/kustomize`, `helm list`), and no bash step ran.
 
 ## Phase 6: Real clusters and release
 - [ ] Gateway mode, and every accelerator and engine the guide's matrix allows
