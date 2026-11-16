@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import re
+import shlex
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from llmdup.core.guides import Catalog, GuideEntry, catalog, modes_of, static_tags, step_lists
 from llmdup.core.models import (
@@ -11,6 +14,7 @@ from llmdup.core.models import (
     GuideInfo,
     Plan,
     PlanVariable,
+    Profile,
     SkippedStep,
     Step,
     StepTag,
@@ -32,6 +36,11 @@ ACTION_SECTIONS = {
     Action.DOWN: ("cleanup",),
 }
 DEFAULT_OPTION = "standard"
+LOCAL_PROFILE = Path(__file__).parents[1] / "local_profile"
+LOCAL_GUIDE = "optimized-baseline"
+SIM_MODEL = "llmdup-sim"
+INDEX_SUFFIX = re.compile(r"\[\d+\]$")
+DELETE_NAMESPACE = re.compile(r"kubectl\s+delete\s+namespace\b")
 
 
 @dataclass(frozen=True)
@@ -148,11 +157,11 @@ class _Builder:
             raise UsageError(str(exc)) from exc
 
     def option_choice(self, path: str) -> str:
-        group = path.split(".")[1:-1]
+        group = _base(path).split(".")[1:-1]
         return self.choices.options.get(".".join(group), DEFAULT_OPTION)
 
     def reason_to_skip(self, path: str, tags: list[StepTag], action: Action) -> str | None:
-        leaf = path.rsplit(".", 1)[-1]
+        leaf = _base(path).rsplit(".", 1)[-1]
         if StepTag.SKIPPED in tags:
             return "llmdup already holds the release"
         if StepTag.MODE in tags and leaf != self.mode:
@@ -183,6 +192,7 @@ def build_plan(
     ref: str = DEFAULT_LLMD_REF,
     detected: Detected | None = None,
     verify: bool = True,
+    keep_namespace: bool = False,
 ) -> Plan:
     """Turn a guide and the user's choices into an ordered plan of steps.
 
@@ -192,10 +202,17 @@ def build_plan(
         ref: llm-d release tag.
         detected: Cluster facts used for choices the user left unset.
         verify: Include the smoke test after deploy.
+        keep_namespace: For `down`, leave out the guide's namespace deletion.
 
     Returns:
         The plan. Nothing has run.
+
+    Raises:
+        UsageError: The local profile was asked for another guide.
     """
+    if choices.profile is Profile.LOCAL and choices.guide != LOCAL_GUIDE:
+        msg = f"the local profile deploys {LOCAL_GUIDE} only"
+        raise UsageError(msg)
     found = catalog(ref)
     entry = found.entry(choices.guide)
     info = found.info(choices.guide)
@@ -208,8 +225,61 @@ def build_plan(
         if not verify and StepTag.SENDS_TRAFFIC in tags:
             builder.skipped.append(SkippedStep(path=path, reason="--no-verify"))
             continue
+        if action is Action.DOWN and isinstance(node, list) and len(node) > 1:
+            for i, item in enumerate(node):
+                if keep_namespace and _deletes_namespace(item):
+                    builder.skipped.append(SkippedStep(path=f"{path}[{i}]", reason="--keep-namespace"))
+                else:
+                    builder.add(f"{path}[{i}]", tags, action)
+            continue
         builder.add(path, tags, action)
+    if choices.profile is Profile.LOCAL:
+        _apply_local_profile(builder, action)
     return _finish(found, info, choices, action, mode, resolved, builder)
+
+
+def _base(path: str) -> str:
+    return INDEX_SUFFIX.sub("", path)
+
+
+def _deletes_namespace(step: object) -> bool:
+    # ponytail: matches the upstream command text; add a guide.yaml tag upstream if this ever misfires
+    return isinstance(step, dict) and bool(DELETE_NAMESPACE.search(str(step.get("run", ""))))
+
+
+def _local_step(path: str, command: str) -> Step:
+    script = f"#!/usr/bin/env bash\n# llmdup local profile\nset -euo pipefail\n\n{command}\n"
+    return Step(path=path, tags=[StepTag.LOCAL], command=command, script=script)
+
+
+def _apply_local_profile(builder: _Builder, action: Action) -> None:
+    overlay = shlex.quote(str(LOCAL_PROFILE / "sim-overlay"))
+    values = shlex.quote(str(LOCAL_PROFILE / "router-small.values.yaml"))
+    replaced = {
+        "prerequisites.secrets": None,
+        "deploy.modelserver.standard": _local_step("local.simulator", f'kubectl apply -n "${{NAMESPACE}}" -k {overlay}'),
+        "cleanup.modelserver.standard": _local_step(
+            "local.simulator",
+            f'kubectl delete -n "${{NAMESPACE}}" -k {overlay} --ignore-not-found',
+        ),
+    }
+    small = _local_step(
+        "local.router_small",
+        'helm upgrade "${GUIDE_NAME}" "${ROUTER_STANDALONE_CHART}" --reuse-values '
+        f'-f {values} -n "${{NAMESPACE}}" --version "${{ROUTER_CHART_VERSION}}"',
+    )
+    steps: list[Step] = []
+    for step in builder.steps:
+        if step.path in replaced:
+            reason = "the simulator replaces the model servers" if replaced[step.path] else "the simulator needs no Hugging Face token"
+            builder.skipped.append(SkippedStep(path=step.path, reason=f"local profile: {reason}"))
+            if (local := replaced[step.path]) is not None:
+                steps.append(local)
+            continue
+        steps.append(step)
+        if action is Action.UP and step.path == "deploy.standalone":
+            steps.append(small)
+    builder.steps = steps
 
 
 def _finish(

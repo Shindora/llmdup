@@ -59,21 +59,29 @@ Notes:
 - Bash steps reach the pinned context through exported `kubectl`/`helm` shell functions that add `--context`/`--kube-context`, so upstream commands run unchanged.
 
 ## Phase 3: Local profile, up, status, down
-- [ ] `local.py`: `local up` creates a kind cluster named `llmdup` when it is missing; `local down` deletes it
-- [ ] `local_profile/sim-overlay`: two replicas of `ghcr.io/llm-d/llm-d-inference-sim`, labelled `llm-d.ai/guide: optimized-baseline`; read the simulator's README and `manifests/deployment.yaml` for its flags and current tag
-- [ ] `local_profile/router-small.values.yaml`: lower the router's CPU and memory requests so it fits a laptop
-- [ ] Local plan: the `optimized-baseline` plan in standalone mode, with the model server step replaced by the simulator overlay and the small values applied after the router install
-- [ ] `runner.py`: run steps, yield events, wait for readiness, stop at the first failure and report the failing command with its last 40 log lines
-- [ ] `state.py` and `status.py`, then CLI `up`, `status`, `test` and `down`
-- [ ] Confirmation for cluster-scoped steps and for `down`
+- [x] `local.py`: `local up` creates a kind cluster named `llmdup` when it is missing; `local down` deletes it
+- [x] `local_profile/sim-overlay`: two replicas of `ghcr.io/llm-d/llm-d-inference-sim`, labelled `llm-d.ai/guide: optimized-baseline`; read the simulator's README and `manifests/deployment.yaml` for its flags and current tag
+- [x] `local_profile/router-small.values.yaml`: lower the router's CPU and memory requests so it fits a laptop
+- [x] Local plan: the `optimized-baseline` plan in standalone mode, with the model server step replaced by the simulator overlay and the small values applied after the router install
+- [x] `runner.py`: run steps, yield events, wait for readiness, stop at the first failure and report the failing command with its last 40 log lines
+- [x] `state.py` and `status.py`, then CLI `up`, `status`, `test` and `down`
+- [x] Confirmation for cluster-scoped steps and for `down`
 
 Done when:
 
-- [ ] `llmdup local up --yes` ends with an HTTP 200 from `/v1/completions` through the router.
-- [ ] `llmdup status --json` shows the router and two simulator pods ready, and the endpoint.
-- [ ] After `llmdup down --yes`, `llmdup status` shows nothing deployed.
-- [ ] After a step is killed mid-run, `status` reports a partial deploy and `down` cleans it up.
-- [ ] The end-to-end job passes in CI.
+- [x] `llmdup local up --yes` ends with an HTTP 200 from `/v1/completions` through the router.
+- [x] `llmdup status --json` shows the router and two simulator pods ready, and the endpoint.
+- [x] After `llmdup down --yes`, `llmdup status` shows nothing deployed.
+- [x] After a step is killed mid-run, `status` reports a partial deploy and `down` cleans it up.
+- [ ] The end-to-end job passes in CI. Passes locally (`pytest -m e2e`, 5 tests, kind v1.37.0 on rootful Podman, 1m53s); the CI job is written but has not run because the repo has no GitHub remote.
+
+Notes:
+
+- Upstream differs: `cleanup.rest` in optimized-baseline runs `kubectl delete -k guides/recipes/modelserver/components/monitoring --ignore-not-found=true`, which fails on any cluster without the Prometheus Operator CRDs (`no matches for kind "PodMonitor"`), and because the three commands share one step the namespace delete never ran. Teardown now runs each item of a cleanup step list as its own step (`cleanup.rest[0]`, ...), keeps going past failures, and then checks what is left. The state ConfigMap is removed only when nothing is left.
+- Local profile: `prerequisites.secrets` is dropped (the simulator needs no Hugging Face token); `deploy.modelserver.standard` becomes `local.simulator`; `local.router_small` runs `helm upgrade --reuse-values -f router-small.values.yaml` right after the router install.
+- Simulator: `ghcr.io/llm-d/llm-d-inference-sim:v1.2.0` (latest release; the repo's `manifests/deployment.yaml` still says v0.11.2 and adds a vLLM render sidecar, which llmdup leaves out). `--max-model-len 32768`, because the default 1024 made `verify.tests.shared_prefix` return HTTP 400.
+- `up` runs the doctor checks first and exits 3 if any fails. `--dry-run` prints the script without gating.
+- Steps run in separate bash processes; after each step its exported environment and working directory are captured (base64 `env -0` on stdout after a marker, never written to disk) and passed to the next step. Lines containing the `HF_TOKEN` value are redacted.
 
 ## Phase 4: Terminal UI
 - [ ] Read the current Textual docs for screens, tables, inputs, logs, workers and testing before writing code

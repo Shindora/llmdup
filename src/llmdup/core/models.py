@@ -296,3 +296,134 @@ class DoctorReport(BaseModel):
     def ok(self) -> bool:
         """Whether no check failed."""
         return all(c.status is not CheckStatus.FAIL for c in self.checks)
+
+
+class StepStarted(BaseModel):
+    """A step began; `index` counts from 1 and `total` includes the env step."""
+
+    path: str
+    index: int
+    total: int
+    command: str
+
+
+class LogLine(BaseModel):
+    """One line of output from the running step."""
+
+    path: str
+    line: str
+
+
+class StepFinished(BaseModel):
+    """A step ended."""
+
+    path: str
+    ok: bool
+    returncode: int = 0
+    seconds: float = 0.0
+
+
+class WaitProgress(BaseModel):
+    """Progress while waiting for pods to become ready."""
+
+    message: str
+    ready: int = 0
+    total: int = 0
+
+
+class RunFinished(BaseModel):
+    """The run ended; on failure it names the step, its command and its last log lines."""
+
+    action: Action
+    guide: str
+    namespace: str
+    ok: bool
+    message: str
+    failed_step: str | None = None
+    command: str | None = None
+    tail: list[str] = Field(default_factory=list)
+    steps: list[StepFinished] = Field(default_factory=list)
+
+
+type RunEvent = StepStarted | LogLine | StepFinished | WaitProgress | RunFinished
+
+
+class ConfirmationNeededError(LlmdupError):
+    """A cluster-scoped step or a delete needs confirmation that was not given."""
+
+    exit_code = ExitCode.CONFIRMATION_NEEDED
+    code = "confirmation-needed"
+
+
+class DoctorFailedError(LlmdupError):
+    """A blocking preflight check failed."""
+
+    exit_code = ExitCode.DOCTOR_FAILED
+    code = "doctor"
+
+
+class StackPhase(StrEnum):
+    """Where a stack's last deploy or teardown got to."""
+
+    DEPLOYING = "deploying"
+    DEPLOYED = "deployed"
+    FAILED = "failed"
+    TEARING_DOWN = "tearing-down"
+
+
+class StackState(BaseModel):
+    """What llmdup records in the `llmdup-state` ConfigMap of a stack's namespace."""
+
+    guide: str
+    namespace: str
+    profile: Profile = Profile.DEFAULT
+    mode: str | None = None
+    options: dict[str, str] = Field(default_factory=dict)
+    overrides: dict[str, str] = Field(default_factory=dict)
+    llmd_ref: str
+    commit: str | None = None
+    phase: StackPhase = StackPhase.DEPLOYING
+    steps_done: list[str] = Field(default_factory=list)
+    failed_step: str | None = None
+    updated_at: str | None = None
+
+    def choices(self) -> Choices:
+        """Return the choices that rebuild this stack's plan."""
+        return Choices(guide=self.guide, mode=self.mode, options=self.options, sets=self.overrides, profile=self.profile)
+
+
+class PodStatus(BaseModel):
+    """One pod of a stack."""
+
+    name: str
+    role: str
+    phase: str
+    ready: bool
+    restarts: int = 0
+
+
+class StackStatus(BaseModel):
+    """One deployed stack as `llmdup status` reports it."""
+
+    guide: str
+    namespace: str
+    profile: Profile
+    mode: str | None
+    phase: StackPhase
+    health: str
+    release: HelmRelease | None = None
+    pods: list[PodStatus] = Field(default_factory=list)
+    endpoint: str | None = None
+    port_forward: str | None = None
+    llmd_ref: str
+    commit: str | None = None
+    steps_done: list[str] = Field(default_factory=list)
+    failed_step: str | None = None
+    updated_at: str | None = None
+
+
+class StatusReport(BaseModel):
+    """Output of `llmdup status`."""
+
+    context: str | None
+    stacks: list[StackStatus]

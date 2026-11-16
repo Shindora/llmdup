@@ -1,8 +1,9 @@
 # Copyright 2026 The llmdup Authors
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+import sys
+from collections.abc import AsyncGenerator, Callable, Generator, Sequence
+from contextlib import aclosing, contextmanager
 from functools import singledispatch
 from typing import Annotated
 
@@ -10,23 +11,36 @@ import typer
 from pydantic import BaseModel
 
 from llmdup import __version__
+from llmdup.core import local as local_core
 from llmdup.core.doctor import doctor as run_doctor
 from llmdup.core.guides import catalog
 from llmdup.core.kube import Kube
 from llmdup.core.models import (
+    Action,
     CheckResult,
     CheckStatus,
     Choices,
+    ConfirmationNeededError,
     Envelope,
     ErrorInfo,
     ExitCode,
     GuideSummary,
     LlmdupError,
+    LogLine,
     Plan,
+    RunEvent,
+    RunFinished,
+    StackStatus,
+    StatusReport,
+    StepFinished,
+    StepStarted,
     UsageError,
     VersionInfo,
+    WaitProgress,
 )
 from llmdup.core.planner import build_plan
+from llmdup.core.runner import Prepared, execute, prepare_recorded, prepare_up
+from llmdup.core.status import status as run_status
 from llmdup.core.upstream import DEFAULT_LLMD_REF
 
 app = typer.Typer(
@@ -37,10 +51,12 @@ app = typer.Typer(
 )
 guides_app = typer.Typer(help="List and describe the guides of the pinned llm-d release.", no_args_is_help=True)
 app.add_typer(guides_app, name="guides")
+local_app = typer.Typer(help="A local kind cluster with the llm-d simulator, no GPU needed.", no_args_is_help=True)
+app.add_typer(local_app, name="local")
 
 JsonOpt = Annotated[bool, typer.Option("--json", help="Print one JSON document on stdout.")]
 ContextOpt = Annotated[str | None, typer.Option("--context", help="Kube context to use.")]
-RefOpt = Annotated[str | None, typer.Option("--llmd-ref", help=f"llm-d release tag [default: {DEFAULT_LLMD_REF}].")]
+RefOpt = Annotated[str | None, typer.Option("--llmd-ref", help=f"llm-d release tag (default {DEFAULT_LLMD_REF}).")]
 GuideArg = Annotated[str, typer.Argument(help="Guide name, as listed by `llmdup guides list`.")]
 AcceleratorOpt = Annotated[str | None, typer.Option("--accelerator", help="ACCELERATOR_TYPE, such as gpu or tpu/v6.")]
 EngineOpt = Annotated[str | None, typer.Option("--engine", help="MODEL_SERVER, such as vllm or sglang.")]
@@ -80,6 +96,59 @@ def _(item: CheckResult) -> None:
     typer.echo(f"[{CHECK_MARKS[item.status]}] {item.name}: {item.found}")
     if item.fix and item.status in {CheckStatus.WARN, CheckStatus.FAIL}:
         typer.echo(f"       fix: {item.fix}")
+
+
+@render.register
+def _(item: StepStarted) -> None:
+    typer.echo(f"==> [{item.index}/{item.total}] {item.path}", err=True)
+
+
+@render.register
+def _(item: LogLine) -> None:
+    typer.echo(f"    {item.line}", err=True)
+
+
+@render.register
+def _(item: StepFinished) -> None:
+    result = "ok" if item.ok else f"FAILED (exit {item.returncode})"
+    typer.echo(f"    {result} in {item.seconds}s", err=True)
+
+
+@render.register
+def _(item: WaitProgress) -> None:
+    typer.echo(f"... {item.message}", err=True)
+
+
+@render.register
+def _(item: RunFinished) -> None:
+    typer.echo(f"{'ok' if item.ok else 'FAILED'}: {item.message}")
+    if not item.ok and item.command:
+        typer.echo(f"failing command:\n{item.command}")
+    if not item.ok and item.tail:
+        typer.echo("last log lines:\n" + "\n".join(f"  {line}" for line in item.tail))
+
+
+@render.register
+def _(item: StackStatus) -> None:
+    typer.echo(f"{item.guide}  namespace {item.namespace}  {item.health}  ({item.phase}, profile {item.profile}, mode {item.mode or '-'})")
+    release = f"{item.release.name} {item.release.status}" if item.release else "none"
+    typer.echo(f"  release: {release}   llm-d {item.llmd_ref}")
+    typer.echo(f"  endpoint: {item.endpoint or '-'}")
+    if item.port_forward:
+        typer.echo(f"  reach it: {item.port_forward}")
+    for pod in item.pods:
+        typer.echo(f"  {'ready' if pod.ready else 'wait '}  {pod.role:<12}  {pod.name}  {pod.phase}  restarts {pod.restarts}")
+    if item.failed_step:
+        typer.echo(f"  failed step: {item.failed_step}")
+
+
+@render.register
+def _(item: StatusReport) -> None:
+    typer.echo(f"context: {item.context or '(none)'}")
+    if not item.stacks:
+        typer.echo("nothing deployed by llmdup")
+    for stack in item.stacks:
+        render(stack)
 
 
 def _kube(ctx: typer.Context, context: str | None) -> Kube:
@@ -265,3 +334,179 @@ def doctor(
             render(check)
     if failed:
         raise typer.Exit(int(ExitCode.DOCTOR_FAILED))
+
+
+def _confirm(prepared: Prepared, *, yes: bool) -> bool:
+    if yes or not prepared.confirm:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    typer.echo("These steps need confirmation:\n", err=True)
+    for command in prepared.confirm:
+        typer.echo(command + "\n", err=True)
+    return typer.confirm("Run them?", default=False, err=True)
+
+
+async def _drive(events: AsyncGenerator[RunEvent], *, json_out: bool) -> RunFinished:
+    final: RunFinished | None = None
+    async with aclosing(events) as stream:
+        async for event in stream:
+            if isinstance(event, RunFinished):
+                final = event
+            elif json_out:
+                render(event) if not isinstance(event, LogLine) else typer.echo(event.line, err=True)
+            else:
+                render(event)
+    if final is None:
+        msg = "the run ended without a result"
+        raise LlmdupError(msg)
+    return final
+
+
+def _finish(command: str, final: RunFinished, *, json_out: bool) -> None:
+    if json_out:
+        errors = [] if final.ok else [ErrorInfo(code="step-failed", message=final.message)]
+        typer.echo(Envelope(ok=final.ok, command=command, data=_dump(final), errors=errors).model_dump_json())
+    else:
+        render(final)
+    if not final.ok:
+        raise typer.Exit(int(ExitCode.STEP_FAILED))
+
+
+async def _run(kube: Kube, prepared: Prepared, *, yes: bool, json_out: bool, timeout: float) -> RunFinished:
+    if not _confirm(prepared, yes=yes):
+        hint = "\n\n".join(prepared.confirm)
+        msg = f"confirmation needed for: {', '.join(prepared.plan.needs_confirmation)}"
+        raise ConfirmationNeededError(msg, hint=f"pass --yes to run:\n{hint}")
+    return await _drive(execute(kube, prepared, confirmed=True, timeout=timeout), json_out=json_out)
+
+
+YesOpt = Annotated[bool, typer.Option("--yes", "-y", help="Confirm cluster-scoped steps and deletes.")]
+TimeoutOpt = Annotated[float, typer.Option("--timeout", help="Seconds for the whole run.")]
+
+
+@app.command()
+def up(
+    ctx: typer.Context,
+    guide: GuideArg,
+    accelerator: AcceleratorOpt = None,
+    engine: EngineOpt = None,
+    provider: ProviderOpt = None,
+    mode: ModeOpt = None,
+    namespace: NamespaceOpt = None,
+    model: ModelOpt = None,
+    sets: SetOpt = None,
+    options: OptionOpt = None,
+    yes: YesOpt = False,
+    no_verify: Annotated[bool, typer.Option("--no-verify", help="Skip the smoke test.")] = False,
+    timeout: TimeoutOpt = 1800,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print the commands; run nothing.")] = False,
+    json_out: JsonOpt = False,
+    context: ContextOpt = None,
+    llmd_ref: RefOpt = None,
+) -> None:
+    """Deploy a guide: run the plan, wait for ready pods, then send one test request."""
+    with _handled("up", json_out=json_out):
+        flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
+        kube = _kube(ctx, context)
+        choices = _choices(guide, flags, sets, options)
+        prepared = asyncio.run(prepare_up(kube, choices, ref=_ref(ctx, llmd_ref), verify=not no_verify, gate=not dry_run))
+        if dry_run:
+            if json_out:
+                typer.echo(Envelope(ok=True, command="up", data=_dump(prepared)).model_dump_json())
+            else:
+                typer.echo(prepared.plan.script, nl=False)
+            return
+        final = asyncio.run(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
+    _finish("up", final, json_out=json_out)
+
+
+@app.command()
+def status(
+    ctx: typer.Context,
+    namespace: NamespaceOpt = None,
+    watch: Annotated[bool, typer.Option("--watch", "-w", help="Refresh every 2 seconds until ctrl-c.")] = False,
+    json_out: JsonOpt = False,
+    context: ContextOpt = None,
+) -> None:
+    """Show deployed stacks, their pods, endpoint and readiness."""
+    with _handled("status", json_out=json_out):
+        if watch and json_out:
+            msg = "--watch and --json cannot be combined"
+            raise UsageError(msg)
+        kube = _kube(ctx, context)
+        report = asyncio.run(run_status(kube, namespace))
+        _emit("status", report, json_out=json_out, human=lambda: render(report))
+        while watch:
+            asyncio.run(asyncio.sleep(2))
+            report = asyncio.run(run_status(kube, namespace))
+            typer.echo("\x1b[2J\x1b[H", nl=False)
+            render(report)
+
+
+@app.command("test")
+def rerun_tests(
+    ctx: typer.Context,
+    namespace: NamespaceOpt = None,
+    timeout: TimeoutOpt = 600,
+    json_out: JsonOpt = False,
+    context: ContextOpt = None,
+) -> None:
+    """Run the guide's verify.tests steps again against a deployed stack."""
+    with _handled("test", json_out=json_out):
+        kube = _kube(ctx, context)
+        prepared = asyncio.run(prepare_recorded(kube, Action.TEST, namespace))
+        final = asyncio.run(_run(kube, prepared, yes=True, json_out=json_out, timeout=timeout))
+    _finish("test", final, json_out=json_out)
+
+
+@app.command()
+def down(
+    ctx: typer.Context,
+    namespace: NamespaceOpt = None,
+    yes: YesOpt = False,
+    keep_namespace: Annotated[bool, typer.Option("--keep-namespace", help="Leave the namespace in place.")] = False,
+    timeout: TimeoutOpt = 900,
+    json_out: JsonOpt = False,
+    context: ContextOpt = None,
+) -> None:
+    """Tear a stack down with the guide's cleanup steps."""
+    with _handled("down", json_out=json_out):
+        kube = _kube(ctx, context)
+        prepared = asyncio.run(prepare_recorded(kube, Action.DOWN, namespace, keep_namespace=keep_namespace))
+        final = asyncio.run(_run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout))
+    _finish("down", final, json_out=json_out)
+
+
+@local_app.command("up")
+def local_up(
+    yes: YesOpt = False,
+    no_verify: Annotated[bool, typer.Option("--no-verify", help="Skip the smoke test.")] = False,
+    timeout: TimeoutOpt = 1800,
+    json_out: JsonOpt = False,
+) -> None:
+    """Create the kind cluster `llmdup` if needed and deploy optimized-baseline with the simulator."""
+    with _handled("local up", json_out=json_out):
+        kube = local_core.local_kube()
+
+        async def flow() -> RunFinished:
+            async for event in local_core.create_cluster(kube):
+                render(event)
+                if isinstance(event, StepFinished) and not event.ok:
+                    msg = "kind create cluster failed"
+                    raise LlmdupError(msg, hint="is Docker or Podman running? For Podman set KIND_EXPERIMENTAL_PROVIDER=podman")
+            prepared = await prepare_up(kube, local_core.local_choices(), verify=not no_verify)
+            return await _run(kube, prepared, yes=yes, json_out=json_out, timeout=timeout)
+
+        final = asyncio.run(flow())
+    _finish("local up", final, json_out=json_out)
+
+
+@local_app.command("down")
+def local_down(yes: YesOpt = False, json_out: JsonOpt = False) -> None:
+    """Delete the kind cluster `llmdup`."""
+    with _handled("local down", json_out=json_out):
+        if not yes and sys.stdin.isatty():
+            yes = typer.confirm(f"Delete the kind cluster {local_core.CLUSTER}?", default=False, err=True)
+        final = asyncio.run(_drive(local_core.delete_cluster(local_core.local_kube(), confirmed=yes), json_out=json_out))
+    _finish("local down", final, json_out=json_out)

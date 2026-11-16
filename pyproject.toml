@@ -79,6 +79,6 @@ ignore-one-line-docstrings = true
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["suspicious-subprocess-import", "assert", "D", "ANN", "implicit-namespace-package", "private-member-access", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+"tests/**" = ["suspicious-url-open-usage", "suspicious-subprocess-import", "assert", "D", "ANN", "implicit-namespace-package", "private-member-access", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "src/llmdup/core/kube.py" = ["subprocess-without-shell-equals-true"]
 "src/llmdup/cli.py" = ["docstring-missing-exception", "boolean-type-hint-positional-argument", "boolean-default-value-positional-argument", "function-call-in-default-argument"]

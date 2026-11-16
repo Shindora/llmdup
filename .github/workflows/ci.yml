@@ -50,5 +50,6 @@ jobs:
         with:
           install_only: true
       - uses: azure/setup-helm@v4
+      - run: kind create cluster --name llmdup --wait 120s
       - run: uv sync --python 3.14
       - run: uv run pytest -m e2e -x -v

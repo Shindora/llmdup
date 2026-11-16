@@ -1,0 +1,12 @@
+# llmdup local profile: llm-d-inference-sim in place of the optimized-baseline model servers.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+labels:
+  - pairs:
+      llm-d.ai/guide: optimized-baseline
+      llm-d.ai/model: llmdup-sim
+      app.kubernetes.io/managed-by: llmdup
+    includeSelectors: true
+    includeTemplates: true

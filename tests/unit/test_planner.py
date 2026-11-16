@@ -107,8 +107,15 @@ def test_plan_rejects_bad_choices(choices: Choices, needle: str) -> None:
 
 def test_down_plan_needs_confirmation_for_every_step() -> None:
     plan = build_plan(Choices(guide="optimized-baseline"), action=Action.DOWN)
-    assert [s.path for s in plan.steps] == ["cleanup.modelserver.standard", "cleanup.rest"]
-    assert plan.needs_confirmation == ["cleanup.modelserver.standard", "cleanup.rest"]
+    paths = ["cleanup.modelserver.standard", "cleanup.rest[0]", "cleanup.rest[1]", "cleanup.rest[2]"]
+    assert [s.path for s in plan.steps] == paths
+    assert plan.needs_confirmation == paths
+
+
+def test_down_keep_namespace_drops_namespace_delete() -> None:
+    plan = build_plan(Choices(guide="optimized-baseline"), action=Action.DOWN, keep_namespace=True)
+    assert "cleanup.rest[2]" not in [s.path for s in plan.steps]
+    assert any(s.path == "cleanup.rest[2]" and s.reason == "--keep-namespace" for s in plan.skipped)
 
 
 def test_plan_never_contains_hf_token_value(monkeypatch: pytest.MonkeyPatch) -> None:
