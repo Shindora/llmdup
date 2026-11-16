@@ -40,16 +40,23 @@ Notes, where upstream differs from PLAN.md:
 - `--set` refuses sensitive variables (such as `HF_TOKEN`); they come from the environment only.
 
 ## Phase 2: Detect and doctor
-- [ ] `kube.py`: one wrapper that runs `kubectl`, `helm`, `kind` and `bash` with a timeout and captured output, plus a fake for tests
-- [ ] `detect.py`: context, server version, installed CRDs, existing Helm releases, provider (`gke` when nodes carry `cloud.google.com/gke-nodepool`)
-- [ ] `detect.py`: map allocatable resources and DeviceClasses to `ACCELERATOR_TYPE`, using the table in step 3 of the upstream `deploy-llm-d` skill
-- [ ] `doctor.py`: the checks in the table below, each returning ok, warn or fail with `found` and `fix`
-- [ ] CLI: `doctor`, exit code 3 when any check fails
+- [x] `kube.py`: one wrapper that runs `kubectl`, `helm`, `kind` and `bash` with a timeout and captured output, plus a fake for tests
+- [x] `detect.py`: context, server version, installed CRDs, existing Helm releases, provider (`gke` when nodes carry `cloud.google.com/gke-nodepool`)
+- [x] `detect.py`: map allocatable resources and DeviceClasses to `ACCELERATOR_TYPE`, using the table in step 3 of the upstream `deploy-llm-d` skill
+- [x] `doctor.py`: the checks in the table below, each returning ok, warn or fail with `found` and `fix`
+- [x] CLI: `doctor`, exit code 3 when any check fails
 
 Done when:
 
-- [ ] Unit tests with recorded `kubectl -o json` output cover a GPU cluster, a CPU-only cluster and an unreachable cluster.
-- [ ] `llmdup doctor optimized-baseline --json` on a fresh kind cluster reports the CRD warning and no accelerator.
+- [x] Unit tests with recorded `kubectl -o json` output cover a GPU cluster, a CPU-only cluster and an unreachable cluster.
+- [x] `llmdup doctor optimized-baseline --json` on a fresh kind cluster reports the CRD warning and no accelerator.
+
+Notes:
+
+- The CPU-only and unreachable fixtures are recorded from a real kind cluster (Kubernetes v1.37.0, podman). No GPU cluster was available to record, so the GPU fixture is that recording with `nvidia.com/gpu` allocatable, GKE node labels, the InferencePool CRD, a Helm release and a GatewayClass added; its `kubectl kustomize` output is a real rendering of the v1.0.0 `gpu/vllm/base` overlay.
+- `llmdup doctor optimized-baseline` on the fresh kind cluster: CRD warning, "no accelerator detected" warning, capacity warning (4 `nvidia.com/gpu` wanted, 0 allocatable), HF_TOKEN fail, exit 3.
+- Doctor adds an `Accelerators` check (the plan's "no accelerator" report) and accepts the same choice flags as `plan`.
+- Bash steps reach the pinned context through exported `kubectl`/`helm` shell functions that add `--context`/`--kube-context`, so upstream commands run unchanged.
 
 ## Phase 3: Local profile, up, status, down
 - [ ] `local.py`: `local up` creates a kind cluster named `llmdup` when it is missing; `local down` deletes it

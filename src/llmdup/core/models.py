@@ -237,3 +237,62 @@ class Plan(BaseModel):
         parts = [self.env_script.rstrip()]
         parts.extend(f"\n# === {step.path} ===\n{step.command}" for step in self.steps)
         return "\n".join(parts) + "\n"
+
+
+class HelmRelease(BaseModel):
+    """A Helm release found on the cluster."""
+
+    name: str
+    namespace: str
+    status: str | None = None
+    chart: str | None = None
+
+
+class ClusterFacts(BaseModel):
+    """What detection found about the current cluster."""
+
+    context: str | None = None
+    reachable: bool = False
+    error: str | None = None
+    server_version: str | None = None
+    nodes: int = 0
+    provider: str = "base"
+    accelerator: str | None = None
+    accelerator_resource: str | None = None
+    accelerator_count: int = 0
+    allocatable: dict[str, int] = Field(default_factory=dict)
+    device_classes: list[str] = Field(default_factory=list)
+    gateway_classes: list[str] = Field(default_factory=list)
+    crds: list[str] = Field(default_factory=list)
+    helm_releases: list[HelmRelease] = Field(default_factory=list)
+
+
+class CheckStatus(StrEnum):
+    """Outcome of one preflight check."""
+
+    OK = "ok"
+    WARN = "warn"
+    FAIL = "fail"
+    SKIP = "skip"
+
+
+class CheckResult(BaseModel):
+    """One preflight check with what was found and how to fix it."""
+
+    name: str
+    status: CheckStatus
+    found: str
+    fix: str | None = None
+
+
+class DoctorReport(BaseModel):
+    """Output of `llmdup doctor`."""
+
+    guide: str | None = None
+    facts: ClusterFacts
+    checks: list[CheckResult]
+
+    @property
+    def ok(self) -> bool:
+        """Whether no check failed."""
+        return all(c.status is not CheckStatus.FAIL for c in self.checks)

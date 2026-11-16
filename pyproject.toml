@@ -67,10 +67,13 @@ select = [
     "COM", "C4", "CPY", "DTZ", "T10", "EM", "EXE", "FIX", "ICN", "INP", "PIE", "T20", "PYI", "PT", "Q", "RSE", "SLF",
     "SIM", "ARG", "PTH", "FLY", "PERF", "RUF",
 ]
-ignore = ["undocumented-public-module", "undocumented-public-package", "undocumented-magic-method", "undocumented-public-init", "missing-trailing-comma"]
+ignore = ["undocumented-public-module", "undocumented-public-package", "undocumented-magic-method", "undocumented-public-init", "missing-trailing-comma", "async-function-with-timeout"]
 
 [tool.ruff.lint.flake8-copyright]
 min-file-size = 1
+
+[tool.ruff.lint.pydoclint]
+ignore-one-line-docstrings = true
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

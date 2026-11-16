@@ -1,15 +1,31 @@
 # Copyright 2026 The llmdup Authors
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
+from functools import singledispatch
 from typing import Annotated
 
 import typer
 from pydantic import BaseModel
 
 from llmdup import __version__
+from llmdup.core.doctor import doctor as run_doctor
 from llmdup.core.guides import catalog
-from llmdup.core.models import Choices, Envelope, ExitCode, GuideSummary, LlmdupError, Plan, UsageError, VersionInfo
+from llmdup.core.kube import Kube
+from llmdup.core.models import (
+    CheckResult,
+    CheckStatus,
+    Choices,
+    Envelope,
+    ErrorInfo,
+    ExitCode,
+    GuideSummary,
+    LlmdupError,
+    Plan,
+    UsageError,
+    VersionInfo,
+)
 from llmdup.core.planner import build_plan
 from llmdup.core.upstream import DEFAULT_LLMD_REF
 
@@ -43,6 +59,31 @@ class GuideList(BaseModel):
     """Output of `llmdup guides list`."""
 
     guides: list[GuideSummary]
+
+
+@singledispatch
+def render(item: object) -> None:
+    """Print one core result or event to the terminal.
+
+    Raises:
+        NotImplementedError: No renderer is registered for the item's type.
+    """
+    msg = f"cli cannot render {type(item).__name__}"
+    raise NotImplementedError(msg)
+
+
+CHECK_MARKS = {CheckStatus.OK: "ok  ", CheckStatus.WARN: "warn", CheckStatus.FAIL: "FAIL", CheckStatus.SKIP: "skip"}
+
+
+@render.register
+def _(item: CheckResult) -> None:
+    typer.echo(f"[{CHECK_MARKS[item.status]}] {item.name}: {item.found}")
+    if item.fix and item.status in {CheckStatus.WARN, CheckStatus.FAIL}:
+        typer.echo(f"       fix: {item.fix}")
+
+
+def _kube(ctx: typer.Context, context: str | None) -> Kube:
+    return Kube(context=context or (ctx.obj or {}).get("context"))
 
 
 def _ref(ctx: typer.Context, value: str | None) -> str:
@@ -191,3 +232,36 @@ def plan(
             typer.echo(result.script, nl=False)
             return
         _emit("plan", result, json_out=json_out, human=lambda: _print_plan(result))
+
+
+@app.command()
+def doctor(
+    ctx: typer.Context,
+    guide: Annotated[str | None, typer.Argument(help="Also check this guide's plan.")] = None,
+    accelerator: AcceleratorOpt = None,
+    engine: EngineOpt = None,
+    provider: ProviderOpt = None,
+    mode: ModeOpt = None,
+    namespace: NamespaceOpt = None,
+    model: ModelOpt = None,
+    sets: SetOpt = None,
+    options: OptionOpt = None,
+    json_out: JsonOpt = False,
+    context: ContextOpt = None,
+    llmd_ref: RefOpt = None,
+) -> None:
+    """Run the preflight checks; exit 3 when any check fails."""
+    with _handled("doctor", json_out=json_out):
+        flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
+        choices = _choices(guide, flags, sets, options) if guide else None
+        report = asyncio.run(run_doctor(_kube(ctx, context), choices, ref=_ref(ctx, llmd_ref)))
+    failed = [c for c in report.checks if c.status is CheckStatus.FAIL]
+    if json_out:
+        errors = [ErrorInfo(code="check", message=f"{c.name}: {c.found}", hint=c.fix) for c in failed]
+        typer.echo(Envelope(ok=report.ok, command="doctor", data=_dump(report), errors=errors).model_dump_json())
+    else:
+        typer.echo(f"context: {report.facts.context or '(none)'}   guide: {report.guide or '-'}")
+        for check in report.checks:
+            render(check)
+    if failed:
+        raise typer.Exit(int(ExitCode.DOCTOR_FAILED))
