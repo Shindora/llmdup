@@ -84,19 +84,36 @@ Notes:
 - Steps run in separate bash processes; after each step its exported environment and working directory are captured (base64 `env -0` on stdout after a marker, never written to disk) and passed to the next step. Lines containing the `HF_TOKEN` value are redacted.
 
 ## Phase 4: Terminal UI
-- [ ] Read the current Textual docs for screens, tables, inputs, logs, workers and testing before writing code
-- [ ] `tui/keys.py`, the header with generated hints, the breadcrumb line, and the prompt with command and filter modes, suggestions and history
-- [ ] The seven views in the Terminal UI section
-- [ ] View history, filtering and sorting as listed under "Keys in every view"
-- [ ] The confirm dialog, and a worker that turns runner events into step progress and log lines
-- [ ] A fake core for tests, so UI tests need no cluster
+- [x] Read the current Textual docs for screens, tables, inputs, logs, workers and testing before writing code (Textual 8.2.8 source: App, Screen, ModalScreen, Binding, DataTable, Input and Suggester, RichLog, workers, Pilot, pytest-textual-snapshot 1.0.0)
+- [x] `tui/keys.py`, the header with generated hints, the breadcrumb line, and the prompt with command and filter modes, suggestions and history
+- [x] The seven views in the Terminal UI section
+- [x] View history, filtering and sorting as listed under "Keys in every view"
+- [x] The confirm dialog, and a worker that turns runner events into step progress and log lines
+- [x] A fake core for tests, so UI tests need no cluster
 
 Done when:
 
-- [ ] Pilot tests open every view by key and by command, and typing `/cache` leaves only rows that contain `cache`.
-- [ ] A test asserts that every binding in `keys.py` appears in the help view.
-- [ ] Snapshot tests cover all seven views at 120 by 36, and the guides view at 100 by 30.
-- [ ] With the local profile, a person can plan, deploy, open the stack, send a test request and tear down without leaving the UI.
+- [x] Pilot tests open every view by key and by command, and typing `/cache` leaves only rows that contain `cache`.
+- [x] A test asserts that every binding in `keys.py` appears in the help view.
+- [x] Snapshot tests cover all seven views at 120 by 36, and the guides view at 100 by 30.
+- [x] With the local profile, a person can plan, deploy, open the stack, send a test request and tear down without leaving the UI. `tests/tui/test_e2e.py` drives the real app with Pilot on `kind-llmdup` (kind v1.37.0, rootful Podman): `:plan optimized-baseline`, `u`, `y` on the confirm dialog, `:stacks`, `enter`, `t` (a `HTTP 200` line in the run log), `ctrl-d`, `y`; it then checks `status` shows nothing deployed. Passed in 2m03s; it refuses to run unless the current context starts with `kind-llmdup`.
+
+Notes, where the UI differs from PLAN.md or adds to it:
+
+- Every view opens by the key and the command the Views table gives it. `deploy` and `help` have no command there, so `:deploy [guide]` (the deploy view, or deploy a guide) and `:help` were added; `stacks` has no key of its own, and `guides` is the start view (`[`, `-` and `esc` go back to it).
+- The stack view (pods, endpoint, last test) is the stacks view with a namespace: `enter` on a stack. It shares the stacks keys and has its own snapshot, as do the filter prompt and the pod log.
+- On the kind cluster `kind-llmdup`, planning or deploying optimized-baseline uses the local profile, as `llmdup local up` does. Elsewhere a guide starts from its defaults plus detection.
+- optimized-baseline does not declare `HF_TOKEN` in `env.static`, so the plan view adds an `HF_TOKEN` row (`set` or `not set`, never the value) whenever the plan creates the secret; it cannot be edited.
+- Confirmation is the same for every run: whenever `Prepared.confirm` is not empty (cluster-scoped deploy steps, every tear down, and tests that need it) a dialog shows the exact commands; `n` or `esc` runs nothing. A doctor failure during `u` opens the doctor view instead.
+- A `status()` error is shown on the breadcrumb line; it is never taken as "nothing deployed" (the guides view shows `-` in DEPLOYED then).
+- `shift-f` copies the exact `kubectl port-forward` command from `StackStatus.port_forward`; it does not start it. `m` reads model-server metrics through the API server proxy on port 8000, as the guide's own `verify.tests.pod_metrics` step does.
+- Sort by age exists only where there is an age: the stacks view (state ConfigMap `updated_at`). Sort by status uses support (guides), check status (doctor), health (stacks).
+- `ctrl-a` lists the `:` commands in a dialog; Textual's own command palette is off. Dialog keys (`y`, `n`/`esc`, `c`) are declared in `keys.py` and listed in help.
+- `ctrl-s` saves `llmdup-<guide>.sh` (plan) or `llmdup-<pod>.log` (logs) in the current directory.
+- At 100 columns a few header hints end in `…`; the help view uses as many columns (up to four) as fit without cutting text and scrolls.
+- `llmdup` with no arguments opens the UI when stdin and stdout are both terminals, else prints help.
+- Core additions, read-only: `status.pod_log`, `status.model_metrics`, `status.contexts`, and the models `PodLog`, `PodMetrics`, `MetricsReport`.
+- Snapshots are SVG files that syrupy 7 stores as `tests/tui/__snapshots__/test_snapshots/*.raw`; a test checks that none holds a token.
 
 ## Phase 5: MCP server and skill
 - [x] `mcp_server.py` with the tools `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test` and `down`

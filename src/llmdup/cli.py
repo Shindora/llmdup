@@ -245,6 +245,11 @@ def main(ctx: typer.Context, context: ContextOpt = None, llmd_ref: RefOpt = None
     ctx.obj = {"context": context, "llmd_ref": llmd_ref or DEFAULT_LLMD_REF}
     if ctx.invoked_subcommand is not None:
         return
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        from llmdup import tui  # Textual loads only when the UI opens
+
+        tui.run(context=context, llmd_ref=llmd_ref or DEFAULT_LLMD_REF)
+        return
     typer.echo(ctx.get_help())
     raise typer.Exit(int(ExitCode.OK))
 

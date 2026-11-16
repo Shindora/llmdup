@@ -428,3 +428,27 @@ class StatusReport(BaseModel):
 
     context: str | None
     stacks: list[StackStatus]
+
+
+class PodLog(BaseModel):
+    """The last lines of one pod's log."""
+
+    namespace: str
+    pod: str
+    lines: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class PodMetrics(BaseModel):
+    """Model-server metric lines of one pod, read through the API server proxy."""
+
+    pod: str
+    lines: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class MetricsReport(BaseModel):
+    """Model-server metrics of every model-server pod in a namespace."""
+
+    namespace: str
+    pods: list[PodMetrics] = Field(default_factory=list)
