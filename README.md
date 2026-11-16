@@ -189,18 +189,25 @@ Eight tools over stdio: `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `st
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/plan.png" alt="Plan view"><br><b>Plan</b>: variables with their source, ordered steps with tags, the exact command of the selected step. <code>e</code> edits a value, <code>ctrl-s</code> saves the script, <code>u</code> deploys.</td>
-<td width="50%"><img src="docs/screenshots/deploy.png" alt="Deploy view"><br><b>Deploy</b>: step progress on the left, the live log on the right. It runs in a background worker; leaving the view does not stop it, <code>ctrl-k</code> cancels.</td>
+<td width="50%" align="center"><img src="docs/screenshots/plan.png" alt="Plan view"><br><b>Plan</b></td>
+<td width="50%" align="center"><img src="docs/screenshots/deploy.png" alt="Deploy view"><br><b>Deploy</b></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/doctor.png" alt="Doctor view"><br><b>Doctor</b>: every preflight check with what was found and how to fix it; <code>c</code> copies the fix.</td>
-<td><img src="docs/screenshots/stacks.png" alt="Stacks view"><br><b>Stacks</b>: pods, endpoint and last test of each deployed stack; <code>t</code> sends a test request, <code>shift-f</code> port-forwards, <code>ctrl-d</code> tears down.</td>
+<td align="center"><img src="docs/screenshots/doctor.png" alt="Doctor view"><br><b>Doctor</b></td>
+<td align="center"><img src="docs/screenshots/stacks.png" alt="Stacks view"><br><b>Stacks</b></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/filter.png" alt="Filter"><br><b>Filter</b>: <code>/cache</code> narrows any table as you type; <code>/!text</code> inverts, <code>/-f text</code> is fuzzy.</td>
-<td><img src="docs/screenshots/help.png" alt="Help view"><br><b>Help</b>: every key, grouped, generated from the same key map as the header hints, so they never drift apart.</td>
+<td align="center"><img src="docs/screenshots/filter.png" alt="Filter"><br><b>Filter</b></td>
+<td align="center"><img src="docs/screenshots/help.png" alt="Help view"><br><b>Help</b></td>
 </tr>
 </table>
+
+- **Plan**: variables with their source, ordered steps with tags, and the exact command of the selected step. `e` edits a value, `ctrl-s` saves the script, `u` deploys.
+- **Deploy**: step progress on the left, the live log on the right. It runs in a background worker, so leaving the view does not stop it; `ctrl-k` cancels.
+- **Doctor**: every preflight check with what was found and how to fix it; `c` copies the fix.
+- **Stacks**: pods, endpoint and last test of each deployed stack. `t` sends a test request, `shift-f` port-forwards, `ctrl-d` tears down.
+- **Filter**: `/cache` narrows any table as you type; `/!text` inverts, `/-f text` is fuzzy.
+- **Help**: every key, grouped, generated from the same key map as the header hints, so the two never drift apart.
 
 Keys follow k9s wherever the meaning is the same: `j`/`k` to move, `enter` to open, `esc` to go back, `[` and `]` for view history, `:` for commands such as `:plan optimized-baseline`, `:stacks` or `:ctx`, `?` for help. Every cluster-wide step and every teardown opens a dialog with the exact commands. The `HF_TOKEN` value is never drawn, only `set` or `not set`.
 
