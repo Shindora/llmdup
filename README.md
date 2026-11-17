@@ -205,13 +205,13 @@ Eight tools over stdio: `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `st
 - **Plan**: variables with their source, ordered steps with tags, and the exact command of the selected step. `e` edits a value, `ctrl-s` saves the script, `u` deploys.
 - **Deploy**: step progress on the left, the live log on the right. It runs in a background worker, so leaving the view does not stop it; `ctrl-k` cancels.
 - **Doctor**: every preflight check with what was found and how to fix it; `c` copies the fix.
-- **Stacks**: pods, endpoint and last test of each deployed stack. `t` sends a test request, `shift-f` port-forwards, `ctrl-d` tears down.
+- **Stacks**: pods, endpoint and last test of each deployed stack. `t` sends a test request, `l` tails the logs, `m` reads the model-server metrics, `shift-f` port-forwards, `ctrl-d` tears down.
 - **Filter**: `/cache` narrows any table as you type; `/!text` inverts, `/-f text` is fuzzy.
 - **Help**: every key, grouped, generated from the same key map as the header hints, so the two never drift apart.
 
 Keys follow k9s wherever the meaning is the same: `j`/`k` to move, `enter` to open, `esc` to go back, `[` and `]` for view history, `:` for commands such as `:plan optimized-baseline`, `:stacks` or `:ctx`, `?` for help. Every cluster-wide step and every teardown opens a dialog with the exact commands. The `HF_TOKEN` value is never drawn, only `set` or `not set`.
 
-<sub>Screens above are the design mockups the UI is built to; the layout also fits a 100 x 30 terminal.</sub>
+<sub>Screens above are the app itself, rendered headless at 120 x 36 against the UI test suite's canned 8-GPU cluster. The layout also fits a 100 x 30 terminal.</sub>
 
 ## How it works
 
@@ -258,9 +258,9 @@ flowchart LR
 
 ```bash
 uv sync
-uv run pytest                  # offline: unit, planner, doctor, runner, MCP
+uv run pytest                  # offline: unit, planner, doctor, runner, MCP, UI pilot and snapshot tests
 uv run pytest -m network       # the real llm-d v1.0.0 release, all 27 guides
-uv run pytest -m e2e           # kind + simulator; refuses any context not starting with kind-llmdup
+uv run pytest -m e2e           # kind + simulator, CLI and UI; refuses any context not starting with kind-llmdup
 uv run ruff check . && uv run ruff format --check . && uv run ty check
 ```
 
