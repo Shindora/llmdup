@@ -155,9 +155,30 @@ An Opus reviewer read Phases 0-3 and 5 and reported 4 high, 8 medium and 11 low 
 - `mcp>=2.3`; NOTICE lists the rendered GPU overlay fixture; the local-profile flow moved from cli.py into `core/local.py`; MCP `doctor` takes the same choices as `up`.
 
 ## Phase 6: Real clusters and release
-- [ ] Gateway mode, and every accelerator and engine the guide's matrix allows
-- [ ] README: install, a local demo, screenshots of the UI, and the command reference
+- [ ] Gateway mode, and every accelerator and engine the guide's matrix allows. Gateway mode on GKE: two llmdup fixes landed, the run then stopped on a GCP API that is off in the test project (below).
+- [x] README: install, a local demo, screenshots of the UI, and the command reference. Screenshots are now the app on the GKE cluster below.
 - [ ] Publish 0.1.0 to PyPI after the name check. Name check done 16 Nov 2026: `llmdup` is free on PyPI (404) and as a GitHub user/org (404). Not published: needs the user's go-ahead.
 
-Done when:
+Done when: not met yet. It needs `up optimized-baseline` on real accelerators the guide supports (4 x 80 GB GPUs, or TPU v5p/v6e/v7).
+
+### GKE run, 17 Nov 2026
+
+Cluster: GKE 1.36.4-gke.2377000, zonal us-central1-a, 2 x e2-standard-4 plus 1 spot g2-standard-4 with one NVIDIA L4, Gateway API enabled. Project quotas: 1 GPU across all regions, no H100/A100, 16 TPU v5e chips, 32 vCPU. No optimized-baseline overlay fits: GPU wants 4 x 80 GB, TPU wants v5p/v6e/v7 (no v5e overlay), CPU wants 128 cores. So the real model servers did not run; the simulator ran on the real cluster instead (`--profile local`, new in this phase). The cluster, its node pools and the proxy-only subnet were deleted after the run.
+
+| Check | Result |
+| --- | --- |
+| `doctor optimized-baseline` | Real detection: `gpu: 1 x nvidia.com/gpu`, `INFRA_PROVIDER=gke`; capacity warns 4 wanted, 1 allocatable; HF_TOKEN unset fails; exit 3 |
+| `up --profile local` standalone | 9/9 steps ok in 80 s, completion through the router |
+| `status`, `test`, `down` | ready 3/3 pods; test 5/5 steps ok (request, 10 x HTTP 200 shared prefix, metrics); down leaves nothing |
+| UI on GKE | plan, deploy (`u`, confirm), stack, test (`t`), logs, tear down (`ctrl-d`): all ok |
+| `up --profile local --mode gateway` | Not finished: GKE answers `NetworkServices API is not enabled` for the inference load balancer's traffic extension; enabling `networkservices.googleapis.com` was not done |
+
+Bugs found on GKE and fixed (commit 7cdceb3):
+- The simulator profile ran only on kind. `plan`, `doctor` and `up` take `--profile local` for any cluster, in standalone or gateway mode.
+- Upstream differs: the optimized-baseline `deploy.gateway` step pins `export GW_PROVIDER_NAME=none`, but `docs/infrastructure/gateway/gke.md` installs the same chart with `provider.name=gke`. With `none` the chart's HTTPRoute carries `timeouts`, which GKE rejects (`GWCER104 ... timeouts are not supported`), and no GKE HealthCheckPolicy is made. When the stack's `llm-d-inference-gateway` has a `gke-l7-*` class, the plan now adds `gateway.provider` right after `deploy.gateway`: `helm upgrade --reuse-values --set provider.name=gke`. Doctor names the Gateway's class, and warns when the Gateway is missing from the namespace.
+- Gateway mode ran the verify step before the Gateway had an address, so `IP` was empty. The wait now also requires the Gateway to be `Programmed` with an address (a missing Gateway does not block; doctor warns about it).
+- Stopping a run on macOS printed `PermissionError`: `killpg` answers EPERM, not ESRCH, when only zombies are left in the group. llmdup now signals the child directly in that case.
+- The stack view titled the test pane with the test plan's first step (`verify.endpoint.standalone`); it is `verify.tests` now.
+
+Seen, not llmdup: `kubectl run --rm -i` on GKE falls back from attach to streaming logs and prints the pod's output twice. The `cleanup.rest[1]` monitoring delete fails without Prometheus Operator CRDs, as on kind.
 

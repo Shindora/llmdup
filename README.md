@@ -71,7 +71,14 @@ llmdup down --yes             # the guide's cleanup, then a check that nothing i
 llmdup local down --yes       # delete the kind cluster
 ```
 
-The local profile is the `optimized-baseline` plan in standalone mode with three changes: the model servers become two [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim) replicas, the router is shrunk to fit a laptop, and the Hugging Face secret is skipped because the simulator downloads nothing. With Podman, set `KIND_EXPERIMENTAL_PROVIDER=podman`.
+The local profile is the `optimized-baseline` plan with three changes: the model servers become two [llm-d-inference-sim](https://github.com/llm-d/llm-d-inference-sim) replicas, the router is shrunk to fit a laptop, and the Hugging Face secret is skipped because the simulator downloads nothing. With Podman, set `KIND_EXPERIMENTAL_PROVIDER=podman`.
+
+The same profile runs on any cluster, to try the router, a Gateway and the whole flow before you have GPUs:
+
+```bash
+llmdup up optimized-baseline --profile local --context my-cluster --yes              # standalone
+llmdup up optimized-baseline --profile local --mode gateway --context my-cluster --yes
+```
 
 ## Deploy on your cluster
 
@@ -118,6 +125,8 @@ llmdup down --context my-cluster --namespace llm-d-optimized-baseline --yes
 ```
 
 Choices you leave out come from detection first, then from the guide's defaults: the accelerator from allocatable resources and DRA DeviceClasses, `INFRA_PROVIDER=gke` on GKE node pools, `MODEL` from the support matrix. A value the guide does not allow exits with code 2 and lists the allowed ones. `--mode gateway` and every accelerator and engine pair in a guide's matrix go through the same path.
+
+Gateway mode expects the Gateway `llm-d-inference-gateway` in the stack's namespace, created the way llm-d's [gateway docs](https://github.com/llm-d/llm-d/tree/v1.0.0/docs/infrastructure/gateway) describe; `doctor` checks it. On a GKE Gateway (`gke-l7-*` class) llmdup adds one step, `gateway.provider`, that switches the router chart to `provider.name=gke` as llm-d's GKE doc does, because GKE rejects the route the guide's `provider.name=none` creates. Before the smoke test, llmdup waits until the Gateway is programmed and has an address.
 
 ## Every guide in llm-d v1.0.0
 
@@ -211,7 +220,7 @@ Eight tools over stdio: `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `st
 
 Keys follow k9s wherever the meaning is the same: `j`/`k` to move, `enter` to open, `esc` to go back, `[` and `]` for view history, `:` for commands such as `:plan optimized-baseline`, `:stacks` or `:ctx`, `?` for help. Every cluster-wide step and every teardown opens a dialog with the exact commands. The `HF_TOKEN` value is never drawn, only `set` or `not set`.
 
-<sub>Screens above are the app itself, rendered headless at 120 x 36 against the UI test suite's canned 8-GPU cluster. The layout also fits a 100 x 30 terminal.</sub>
+<sub>Screens above are the app on a real GKE 1.36 cluster with one L4 GPU node: guides, doctor and plan for that GPU, then a deploy, test and tear down of the simulator profile, all driven from the UI. The layout also fits a 100 x 30 terminal.</sub>
 
 ## How it works
 
