@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from llmdup import cli
+from llmdup.core import kube as kube_module
 from llmdup.core import upstream
 from llmdup.core.detect import pinned
 from llmdup.core.doctor import doctor
@@ -195,3 +196,18 @@ def test_local_down_without_yes_and_no_tty_exits_4(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(cli.local_core, "local_kube", lambda: FakeKube(context="kind-llmdup"))
     result = CliRunner().invoke(cli.app, ["local", "down"])
     assert result.exit_code == 4
+
+
+def test_kill_survives_eperm_from_killpg(monkeypatch: pytest.MonkeyPatch) -> None:
+    def eperm(_pid: int, _sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(kube_module.os, "killpg", eperm)
+
+    async def main() -> int | None:
+        proc = await asyncio.create_subprocess_exec("sleep", "30", start_new_session=True)
+        async with asyncio.timeout(10):
+            await kube_module._kill(proc)
+        return proc.returncode
+
+    assert asyncio.run(main()) is not None

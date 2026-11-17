@@ -122,3 +122,43 @@ def test_plan_never_contains_hf_token_value(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("HF_TOKEN", "hf_secret_value")
     plan = build_plan(Choices(guide="optimized-baseline"))
     assert "hf_secret_value" not in plan.model_dump_json()
+
+
+def test_local_profile_on_any_cluster_in_gateway_mode() -> None:
+    result = CliRunner().invoke(app, ["plan", "optimized-baseline", "--profile", "local", "--mode", "gateway", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)["data"]
+    paths = [s["path"] for s in data["steps"]]
+    assert paths.index("local.router_small") == paths.index("deploy.gateway") + 1
+    assert "local.simulator" in paths
+    assert "deploy.modelserver.standard" not in paths
+    small = next(s for s in data["steps"] if s["path"] == "local.router_small")
+    assert "ROUTER_GATEWAY_CHART" in small["command"]
+    assert {v["name"]: v["value"] for v in data["variables"]}["MODEL"] == "llmdup-sim"
+
+
+GKE_GATEWAY = {"llm-d-optimized-baseline/llm-d-inference-gateway": "gke-l7-regional-external-managed"}
+
+
+def test_gke_gateway_switches_router_provider() -> None:
+    plan = build_plan(Choices(guide="optimized-baseline", mode="gateway"), detected=Detected(gateways=GKE_GATEWAY))
+    paths = [s.path for s in plan.steps]
+    assert paths.index("gateway.provider") == paths.index("deploy.gateway") + 1
+    step = plan.steps[paths.index("gateway.provider")]
+    assert StepTag.GATEWAY_PROVIDER in step.tags
+    assert "--set provider.name=gke" in step.command
+
+
+@pytest.mark.parametrize(
+    ("mode", "gateways", "action"),
+    [
+        ("gateway", {}, Action.UP),
+        ("gateway", {"llm-d-optimized-baseline/llm-d-inference-gateway": "istio"}, Action.UP),
+        ("gateway", {"other-ns/llm-d-inference-gateway": "gke-l7-rilb"}, Action.UP),
+        ("standalone", GKE_GATEWAY, Action.UP),
+        ("gateway", GKE_GATEWAY, Action.DOWN),
+    ],
+)
+def test_gateway_provider_step_only_for_a_gke_gateway_on_up(mode: str, gateways: dict[str, str], action: Action) -> None:
+    plan = build_plan(Choices(guide="optimized-baseline", mode=mode), action=action, detected=Detected(gateways=gateways))
+    assert "gateway.provider" not in [s.path for s in plan.steps]

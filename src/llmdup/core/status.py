@@ -7,9 +7,9 @@ from llmdup.core import state as state_store
 from llmdup.core.detect import current_context, read_helm
 from llmdup.core.kube import Kube
 from llmdup.core.models import MetricsReport, PodLog, PodMetrics, PodStatus, StackPhase, StackState, StackStatus, StatusReport
+from llmdup.core.planner import GATEWAY_NAME
 
 GUIDE_POD_LABEL = "llm-d.ai/guide"
-GATEWAY_NAME = "llm-d-inference-gateway"
 FINISHED_PHASES = frozenset({"Succeeded", "Failed"})
 LOG_TAIL = 500
 MODEL_PORT = 8000
@@ -51,6 +51,16 @@ def pods(doc: object, release: str) -> list[PodStatus]:
                     role = "other"
                 out.append(PodStatus(name=name, role=role, phase=phase, ready=pod_ready(pod), restarts=_restarts(pod)))
     return out
+
+
+def gateway_programmed(doc: object) -> bool | None:
+    """Whether a Gateway is programmed and has an address; None when there is no Gateway."""
+    match doc:
+        case {"status": {"conditions": list(conditions), "addresses": [_, *_]}}:
+            return any(c.get("type") == "Programmed" and c.get("status") == "True" for c in conditions if isinstance(c, dict))
+        case {"metadata": dict()}:
+            return False
+    return None
 
 
 def deployments_ready(doc: object) -> tuple[int, int]:

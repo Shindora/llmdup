@@ -37,8 +37,8 @@ from llmdup.core.models import (
     UsageError,
     WaitProgress,
 )
-from llmdup.core.planner import SECRET_NAMES, Detected, build_plan
-from llmdup.core.status import FINISHED_PHASES, GUIDE_POD_LABEL, deployments_ready, pod_ready
+from llmdup.core.planner import GATEWAY_NAME, SECRET_NAMES, Detected, build_plan
+from llmdup.core.status import FINISHED_PHASES, GUIDE_POD_LABEL, deployments_ready, gateway_programmed, pod_ready
 from llmdup.core.upstream import DEFAULT_LLMD_REF
 
 ENV_MARKER = "__LLMDUP_ENV__"
@@ -146,11 +146,20 @@ async def _readiness(kube: Kube, plan: Plan) -> tuple[bool, WaitProgress, list[s
     summary = [f"{_name(p)}: {p.get('status', {}).get('phase')}, ready={pod_ready(p)}" for p in live]
     done = bool(model) and len(ready) == len(live) and deps_ready == deps
     message = f"{len(ready)}/{len(live)} pods ready, {len(model)} model server pods, {deps_ready}/{deps} deployments available"
+    if plan.mode == "gateway":
+        gw_doc = await kube.json("kubectl", "get", "gateway", GATEWAY_NAME, "-n", plan.namespace, "-o", "json", timeout=30)
+        programmed = gateway_programmed(gw_doc)
+        state = {None: "not found", False: "not programmed yet", True: "programmed"}[programmed]
+        done = done and programmed is not False
+        message += f", gateway {state}"
+        summary.append(f"gateway {GATEWAY_NAME}: {state}")
     return done, WaitProgress(message=message, ready=len(ready), total=len(live)), summary
 
 
 async def wait_ready(kube: Kube, plan: Plan, deadline: float) -> AsyncIterator[WaitProgress]:
     """Poll until the guide's model-server pods and the router release's pods and Deployments are ready.
+
+    In gateway mode, also wait until the Gateway is programmed and has an address, unless it does not exist.
 
     Yields:
         Progress whenever the counts change.
@@ -353,7 +362,7 @@ async def prepare_up(
     if gate and not report.ok:
         failed = [f"{c.name}: {c.found}" for c in report.checks if c.status is CheckStatus.FAIL]
         raise DoctorFailedError("; ".join(failed), hint="run `llmdup doctor` for fixes")
-    plan = build_plan(choices, ref=ref, detected=Detected(accelerator=facts.accelerator, provider=facts.provider), verify=verify)
+    plan = build_plan(choices, ref=ref, detected=Detected.from_facts(facts), verify=verify)
     return Prepared(plan=plan, context=kube.context, doctor=report, confirm=confirm_commands(plan, kube.context))
 
 

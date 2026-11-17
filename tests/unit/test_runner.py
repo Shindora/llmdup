@@ -20,6 +20,7 @@ from llmdup.core.models import (
 )
 from llmdup.core.planner import _local_step
 from llmdup.core.runner import Prepared, execute, run_plan
+from llmdup.core.status import gateway_programmed
 
 ENV = "#!/usr/bin/env bash\nset -euo pipefail\nexport GREETING=hello\n"
 
@@ -95,3 +96,17 @@ def test_execute_refuses_unconfirmed_down() -> None:
 def test_cli_renders_every_run_event() -> None:
     for event_type in typing.get_args(RunEvent.__value__):
         assert cli.render.dispatch(event_type) is not cli.render.dispatch(object), event_type
+
+
+@pytest.mark.parametrize(
+    ("doc", "expected"),
+    [
+        (None, None),
+        ({"metadata": {"name": "llm-d-inference-gateway"}}, False),
+        ({"metadata": {}, "status": {"conditions": [{"type": "Programmed", "status": "Unknown"}]}}, False),
+        ({"metadata": {}, "status": {"conditions": [{"type": "Programmed", "status": "True"}]}}, False),
+        ({"metadata": {}, "status": {"conditions": [{"type": "Programmed", "status": "True"}], "addresses": [{"value": "1.2.3.4"}]}}, True),
+    ],
+)
+def test_gateway_programmed_needs_condition_and_address(doc: object, *, expected: bool | None) -> None:
+    assert gateway_programmed(doc) is expected

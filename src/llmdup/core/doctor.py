@@ -21,7 +21,7 @@ from llmdup.core.models import (
     Plan,
     Profile,
 )
-from llmdup.core.planner import Detected, build_plan
+from llmdup.core.planner import GATEWAY_NAME, GKE_GATEWAY_CLASS, Detected, build_plan
 from llmdup.core.upstream import DEFAULT_LLMD_REF
 
 MIN_KUBERNETES = (1, 29)
@@ -235,8 +235,13 @@ def check_gateway(facts: ClusterFacts, plan: Plan) -> CheckResult:
     """Warn when gateway mode is chosen and no GatewayClass is installed."""
     if plan.mode != "gateway":
         return _check("Gateway provider", CheckStatus.SKIP, f"mode {plan.mode or '-'}")
+    if gateway_class := facts.gateways.get(f"{plan.namespace}/{GATEWAY_NAME}"):
+        extra = "; llmdup sets provider.name=gke for it" if gateway_class.startswith(GKE_GATEWAY_CLASS) else ""
+        return _check("Gateway provider", CheckStatus.OK, f"{GATEWAY_NAME} uses {gateway_class}{extra}")
     if facts.gateway_classes:
-        return _check("Gateway provider", CheckStatus.OK, ", ".join(facts.gateway_classes))
+        found = f"no Gateway {GATEWAY_NAME} in {plan.namespace}; classes: {', '.join(facts.gateway_classes)}"
+        fix = f"create the Gateway in {plan.namespace} before deploying; see docs/infrastructure/gateway in llm-d"
+        return _check("Gateway provider", CheckStatus.WARN, found, fix)
     fix = "install a Gateway provider; see guides/recipes/gateway in llm-d"
     return _check("Gateway provider", CheckStatus.WARN, "no GatewayClass installed", fix)
 
@@ -266,7 +271,7 @@ async def doctor(
         return DoctorReport(guide=choices.guide if choices else None, facts=facts, checks=checks)
     plan = info = None
     if choices is not None:
-        plan = build_plan(choices, ref=ref, detected=Detected(accelerator=facts.accelerator, provider=facts.provider))
+        plan = build_plan(choices, ref=ref, detected=Detected.from_facts(facts))
         info = catalog(ref).info(choices.guide)
     checks += [check_version(facts), check_accelerators(facts, plan), check_crds(facts)]
     if plan is not None and info is not None:

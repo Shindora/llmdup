@@ -11,6 +11,7 @@ from llmdup.core.guides import DEFAULT_OPTION, Catalog, GuideEntry, catalog, man
 from llmdup.core.models import (
     Action,
     Choices,
+    ClusterFacts,
     GuideInfo,
     Plan,
     PlanVariable,
@@ -39,6 +40,9 @@ SECRET_NAMES = frozenset({"HF_TOKEN"})
 LOCAL_PROFILE = Path(__file__).parents[1] / "local_profile"
 LOCAL_GUIDE = "optimized-baseline"
 SIM_MODEL = "llmdup-sim"
+GATEWAY_NAME = "llm-d-inference-gateway"
+# ponytail: GKE's built-in GatewayClasses all start with this; read the class's controllerName if one ever does not
+GKE_GATEWAY_CLASS = "gke-l7-"
 INDEX_SUFFIX = re.compile(r"\[\d+\]$")
 DELETE_NAMESPACE = re.compile(r"kubectl\s+delete\s+namespace\b")
 
@@ -49,6 +53,12 @@ class Detected:
 
     accelerator: str | None = None
     provider: str | None = None
+    gateways: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_facts(cls, facts: ClusterFacts) -> Detected:
+        """Take the accelerator, provider and Gateways that detection found."""
+        return cls(accelerator=facts.accelerator, provider=facts.provider, gateways=facts.gateways)
 
 
 @dataclass
@@ -214,6 +224,8 @@ def build_plan(
     if choices.profile is Profile.LOCAL and choices.guide != LOCAL_GUIDE:
         msg = f"the local profile deploys {LOCAL_GUIDE} only"
         raise UsageError(msg)
+    if choices.profile is Profile.LOCAL and choices.model is None:
+        choices = choices.model_copy(update={"model": SIM_MODEL})
     found = catalog(ref)
     entry = found.entry(choices.guide)
     info = found.info(choices.guide)
@@ -233,6 +245,9 @@ def build_plan(
         builder.add(path, tags, action)
     if choices.profile is Profile.LOCAL:
         _apply_local_profile(builder, action)
+    if action is Action.UP and mode == "gateway":
+        gateway_class = (detected or Detected()).gateways.get(f"{_namespace(info, resolved)}/{GATEWAY_NAME}", "")
+        _apply_gateway_provider(builder, gateway_class)
     return _finish(found, info, choices, action, mode, resolved, builder)
 
 
@@ -279,9 +294,31 @@ def _deletes_namespace(step: object) -> bool:
     return isinstance(step, dict) and bool(DELETE_NAMESPACE.search(str(step.get("run", ""))))
 
 
-def _local_step(path: str, command: str) -> Step:
-    script = f"#!/usr/bin/env bash\n# llmdup local profile\nset -euo pipefail\n\n{command}\n"
-    return Step(path=path, tags=[StepTag.LOCAL], command=command, script=script)
+def _local_step(path: str, command: str, tag: StepTag = StepTag.LOCAL) -> Step:
+    script = f"#!/usr/bin/env bash\n# added by llmdup: {tag}\nset -euo pipefail\n\n{command}\n"
+    return Step(path=path, tags=[tag], command=command, script=script)
+
+
+def _apply_gateway_provider(builder: _Builder, gateway_class: str) -> None:
+    """On a GKE Gateway, switch the router chart to `provider.name=gke`, as llm-d's GKE gateway doc does.
+
+    The guide's gateway step pins `GW_PROVIDER_NAME=none`, whose HTTPRoute sets `timeouts`; GKE rejects that route.
+    """
+    if not gateway_class.startswith(GKE_GATEWAY_CLASS):
+        return
+    step = _local_step(
+        "gateway.provider",
+        'helm upgrade "${GUIDE_NAME}" "${ROUTER_GATEWAY_CHART}" --reuse-values --set provider.name=gke '
+        '-n "${NAMESPACE}" --version "${ROUTER_CHART_VERSION}"',
+        StepTag.GATEWAY_PROVIDER,
+    )
+    at = next((i for i, s in enumerate(builder.steps) if s.path == "deploy.gateway"), None)
+    if at is not None:
+        builder.steps.insert(at + 1, step)
+
+
+def _namespace(info: GuideInfo, resolved: _Resolved) -> str | None:
+    return resolved.overrides.get("NAMESPACE") or next((v.default for v in info.variables if v.name == "NAMESPACE"), None)
 
 
 def _apply_local_profile(builder: _Builder, action: Action) -> None:
@@ -295,11 +332,7 @@ def _apply_local_profile(builder: _Builder, action: Action) -> None:
             f'kubectl delete -n "${{NAMESPACE}}" -k {overlay} --ignore-not-found',
         ),
     }
-    small = _local_step(
-        "local.router_small",
-        'helm upgrade "${GUIDE_NAME}" "${ROUTER_STANDALONE_CHART}" --reuse-values '
-        f'-f {values} -n "${{NAMESPACE}}" --version "${{ROUTER_CHART_VERSION}}"',
-    )
+    charts = {"deploy.standalone": "ROUTER_STANDALONE_CHART", "deploy.gateway": "ROUTER_GATEWAY_CHART"}
     steps: list[Step] = []
     for step in builder.steps:
         if step.path in replaced:
@@ -309,8 +342,14 @@ def _apply_local_profile(builder: _Builder, action: Action) -> None:
                 steps.append(local)
             continue
         steps.append(step)
-        if action is Action.UP and step.path == "deploy.standalone":
-            steps.append(small)
+        if action is Action.UP and step.path in charts:
+            steps.append(
+                _local_step(
+                    "local.router_small",
+                    f'helm upgrade "${{GUIDE_NAME}}" "${{{charts[step.path]}}}" --reuse-values '
+                    f'-f {values} -n "${{NAMESPACE}}" --version "${{ROUTER_CHART_VERSION}}"',
+                ),
+            )
     builder.steps = steps
 
 
@@ -334,7 +373,7 @@ def _finish(
         for v in info.variables
         if v.name != "REPO_ROOT"
     ]
-    namespace = resolved.overrides.get("NAMESPACE") or next((v.default for v in info.variables if v.name == "NAMESPACE"), None)
+    namespace = _namespace(info, resolved)
     if action is Action.DOWN:
         confirm = [s.path for s in builder.steps]
     else:

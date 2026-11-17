@@ -227,7 +227,7 @@ class Tools:
         detected = None
         if kube_context:
             facts = await detect(await self.kube(kube_context), timeout=10)
-            detected = Detected(accelerator=facts.accelerator, provider=facts.provider)
+            detected = Detected.from_facts(facts)
         choices = _choices(guide, accelerator, engine, provider, mode, namespace, model, sets, options)
         return build_plan(choices, ref=llmd_ref, detected=detected)
 

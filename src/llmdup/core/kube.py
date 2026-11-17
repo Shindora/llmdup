@@ -3,6 +3,7 @@
 """The only module in llmdup that starts subprocesses."""
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -178,18 +179,26 @@ class Kube:
             raise CommandFailedError(argv, code)
 
 
+def _signal(proc: asyncio.subprocess.Process, sig: signal.Signals) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except PermissionError:
+        # macOS answers EPERM, not ESRCH, when only zombies are left in the group
+        with contextlib.suppress(ProcessLookupError):
+            proc.send_signal(sig)
+    except ProcessLookupError:
+        pass
+
+
 async def _kill(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+    _signal(proc, signal.SIGTERM)
     try:
         async with asyncio.timeout(5):
             await proc.wait()
     except TimeoutError:
-        os.killpg(proc.pid, signal.SIGKILL)
+        _signal(proc, signal.SIGKILL)
         await proc.wait()
 
 

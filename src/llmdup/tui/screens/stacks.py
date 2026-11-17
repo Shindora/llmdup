@@ -338,9 +338,7 @@ class StackScreen(StackActions):
         """Title the three panes."""
         super().redraw_titles()
         self.query_one("#info-box").border_title = view_title("stack", self.namespace, None, RowFilter())
-        run = self.tui.deploy_run
-        test = run.plan.steps[0].path if run is not None and run.plan.action is Action.TEST and run.plan.steps else "verify.tests"
-        self.query_one("#test-box").border_title = pane_title("test", test)
+        self.query_one("#test-box").border_title = pane_title("test", "verify.tests")
 
     def crumbs(self) -> list[str]:
         """Stacks, then the namespace."""

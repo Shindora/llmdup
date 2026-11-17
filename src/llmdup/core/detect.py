@@ -32,6 +32,21 @@ TPU_TYPES = {
 INFERENCE_POOL_CRD = "inferencepools.inference.networking.k8s.io"
 
 
+def read_gateways(doc: object) -> dict[str, str]:
+    """Map each Gateway, as `namespace/name`, to its GatewayClass."""
+    match doc:
+        case {"items": list(items)}:
+            pass
+        case _:
+            return {}
+    found = {}
+    for item in items:
+        match item:
+            case {"metadata": {"namespace": str(namespace), "name": str(name)}, "spec": {"gatewayClassName": str(gateway_class)}}:
+                found[f"{namespace}/{name}"] = gateway_class
+    return found
+
+
 def _names(doc: object) -> list[str]:
     match doc:
         case {"items": list(items)}:
@@ -150,12 +165,16 @@ async def detect(kube: Kube, *, timeout: float = 20) -> ClusterFacts:
         crds = tg.create_task(kube.json("kubectl", "get", "crd", "-o", "json", timeout=timeout))
         helm = tg.create_task(kube.json("helm", "list", "-A", "-o", "json", timeout=timeout))
         classes = tg.create_task(kube.json("kubectl", "get", "deviceclasses.resource.k8s.io", "-o", "json", timeout=timeout))
-        gateways = tg.create_task(kube.json("kubectl", "get", "gatewayclasses.gateway.networking.k8s.io", "-o", "json", timeout=timeout))
+        gateway_classes = tg.create_task(
+            kube.json("kubectl", "get", "gatewayclasses.gateway.networking.k8s.io", "-o", "json", timeout=timeout),
+        )
+        gateways = tg.create_task(kube.json("kubectl", "get", "gateways.gateway.networking.k8s.io", "-A", "-o", "json", timeout=timeout))
     read_nodes(nodes.result(), facts)
     read_device_classes(classes.result(), facts)
     facts.crds = _names(crds.result())
     facts.helm_releases = read_helm(helm.result())
-    facts.gateway_classes = _names(gateways.result())
+    facts.gateway_classes = _names(gateway_classes.result())
+    facts.gateways = read_gateways(gateways.result())
     facts.unknown = [name for name, task in (("nodes", nodes), ("crds", crds), ("helm", helm)) if task.result() is None]
     return facts
 

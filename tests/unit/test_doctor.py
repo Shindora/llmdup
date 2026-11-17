@@ -25,6 +25,7 @@ def test_detect_gpu_cluster() -> None:
     assert (facts.accelerator, facts.accelerator_count, facts.provider) == ("gpu", 8, "gke")
     assert "inferencepools.inference.networking.k8s.io" in facts.crds
     assert facts.gateway_classes == ["gke-l7-rilb"]
+    assert facts.gateways == {"llm-d-optimized-baseline/llm-d-inference-gateway": "gke-l7-regional-external-managed"}
 
 
 def test_detect_cpu_cluster() -> None:
@@ -76,6 +77,14 @@ def test_doctor_unsupported_pair_and_gateway() -> None:
     status = _status(report)
     assert status["Guide support"] is CheckStatus.FAIL
     assert status["Gateway provider"] is CheckStatus.WARN
+
+
+def test_doctor_gke_gateway_found() -> None:
+    report = asyncio.run(doctor(recorded("gpu-gke"), Choices(guide="optimized-baseline", mode="gateway")))
+    check = next(c for c in report.checks if c.name == "Gateway provider")
+    assert check.status is CheckStatus.OK
+    assert "gke-l7-regional-external-managed" in check.found
+    assert "provider.name=gke" in check.found
 
 
 def test_doctor_community_pair_warns() -> None:

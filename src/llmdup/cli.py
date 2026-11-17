@@ -30,6 +30,7 @@ from llmdup.core.models import (
     LlmdupError,
     LogLine,
     Plan,
+    Profile,
     RunEvent,
     RunFinished,
     StackStatus,
@@ -66,6 +67,10 @@ ProviderOpt = Annotated[str | None, typer.Option("--provider", help="INFRA_PROVI
 ModeOpt = Annotated[str | None, typer.Option("--mode", help="Endpoint mode: standalone or gateway.")]
 NamespaceOpt = Annotated[str | None, typer.Option("--namespace", "-n", help="Namespace for the stack.")]
 ModelOpt = Annotated[str | None, typer.Option("--model", help="MODEL to serve.")]
+ProfileOpt = Annotated[
+    Profile,
+    typer.Option("--profile", help="local: llm-d-inference-sim instead of real model servers, on any cluster (optimized-baseline only)."),
+]
 SetOpt = Annotated[list[str] | None, typer.Option("--set", help="NAME=VALUE for any other env.static variable.")]
 OptionOpt = Annotated[
     list[str] | None,
@@ -163,7 +168,7 @@ def _given_context(ctx: typer.Context, context: str | None) -> str | None:
 
 def _detected(context: str) -> Detected:
     facts = asyncio.run(detect(Kube(context=context), timeout=10))
-    return Detected(accelerator=facts.accelerator, provider=facts.provider)
+    return Detected.from_facts(facts)
 
 
 def _arun[T](coro: Coroutine[object, object, T]) -> T:
@@ -307,8 +312,14 @@ def guides_show(ctx: typer.Context, guide: GuideArg, json_out: JsonOpt = False, 
         _emit("guides show", info, json_out=json_out, human=human)
 
 
-def _choices(guide: str, flags: dict[str, str | None], sets: list[str] | None, options: list[str] | None) -> Choices:
-    return Choices(guide=guide, sets=_pairs(sets, "--set"), options=_pairs(options, "--option"), **flags)
+def _choices(
+    guide: str,
+    flags: dict[str, str | None],
+    sets: list[str] | None,
+    options: list[str] | None,
+    profile: Profile = Profile.DEFAULT,
+) -> Choices:
+    return Choices(guide=guide, sets=_pairs(sets, "--set"), options=_pairs(options, "--option"), profile=profile, **flags)
 
 
 def _print_plan(plan: Plan) -> None:
@@ -335,6 +346,7 @@ def plan(
     model: ModelOpt = None,
     sets: SetOpt = None,
     options: OptionOpt = None,
+    profile: ProfileOpt = Profile.DEFAULT,
     script: Annotated[bool, typer.Option("--script", help="Print the plan as one bash script.")] = False,
     json_out: JsonOpt = False,
     context: ContextOpt = None,
@@ -348,7 +360,7 @@ def plan(
         flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
         given = _given_context(ctx, context)
         detected = _detected(given) if given else None
-        result = build_plan(_choices(guide, flags, sets, options), ref=_ref(ctx, llmd_ref), detected=detected)
+        result = build_plan(_choices(guide, flags, sets, options, profile), ref=_ref(ctx, llmd_ref), detected=detected)
         if script:
             typer.echo(result.script, nl=False)
             return
@@ -367,6 +379,7 @@ def doctor(
     model: ModelOpt = None,
     sets: SetOpt = None,
     options: OptionOpt = None,
+    profile: ProfileOpt = Profile.DEFAULT,
     json_out: JsonOpt = False,
     context: ContextOpt = None,
     llmd_ref: RefOpt = None,
@@ -374,7 +387,7 @@ def doctor(
     """Run the preflight checks; exit 3 when any check fails."""
     with _handled("doctor", json_out=json_out):
         flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
-        choices = _choices(guide, flags, sets, options) if guide else None
+        choices = _choices(guide, flags, sets, options, profile) if guide else None
         report = asyncio.run(run_doctor(_kube(ctx, context), choices, ref=_ref(ctx, llmd_ref)))
     failed = [c for c in report.checks if c.status is CheckStatus.FAIL]
     if json_out:
@@ -449,6 +462,7 @@ def up(
     model: ModelOpt = None,
     sets: SetOpt = None,
     options: OptionOpt = None,
+    profile: ProfileOpt = Profile.DEFAULT,
     yes: YesOpt = False,
     no_verify: Annotated[bool, typer.Option("--no-verify", help="Skip the smoke test.")] = False,
     timeout: TimeoutOpt = 1800,
@@ -461,7 +475,7 @@ def up(
     with _handled("up", json_out=json_out):
         flags = {"accelerator": accelerator, "engine": engine, "provider": provider, "mode": mode, "namespace": namespace, "model": model}
         kube = _kube(ctx, context)
-        choices = _choices(guide, flags, sets, options)
+        choices = _choices(guide, flags, sets, options, profile)
         prepared = _arun(prepare_up(kube, choices, ref=_ref(ctx, llmd_ref), verify=not no_verify, gate=not dry_run))
         if dry_run:
             if json_out:

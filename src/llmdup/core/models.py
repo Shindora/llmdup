@@ -74,6 +74,7 @@ class StepTag(StrEnum):
     MODE = "mode"
     MANUAL_OPTION = "manual option"
     LOCAL = "local profile"
+    GATEWAY_PROVIDER = "gateway provider"
 
 
 class Profile(StrEnum):
@@ -263,6 +264,7 @@ class ClusterFacts(BaseModel):
     allocatable: dict[str, int] = Field(default_factory=dict)
     device_classes: list[str] = Field(default_factory=list)
     gateway_classes: list[str] = Field(default_factory=list)
+    gateways: dict[str, str] = Field(default_factory=dict)
     crds: list[str] = Field(default_factory=list)
     helm_releases: list[HelmRelease] = Field(default_factory=list)
     unknown: list[str] = Field(default_factory=list)

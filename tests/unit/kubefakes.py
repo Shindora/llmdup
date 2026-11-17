@@ -12,6 +12,7 @@ QUERIES = {
     "helm.json": ("helm", "list", "-A", "-o", "json"),
     "deviceclasses.json": ("kubectl", "get", "deviceclasses.resource.k8s.io", "-o", "json"),
     "gatewayclasses.json": ("kubectl", "get", "gatewayclasses.gateway.networking.k8s.io", "-o", "json"),
+    "gateways.json": ("kubectl", "get", "gateways.gateway.networking.k8s.io", "-A", "-o", "json"),
 }
 
 

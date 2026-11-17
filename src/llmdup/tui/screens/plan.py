@@ -86,7 +86,12 @@ def step_rows(plan: Plan) -> list[Row]:
 
 def command_text(plan: Plan, step: Step) -> Text:
     """The command of one step, as rendered from guide.yaml."""
-    origin = "llmdup's local profile" if StepTag.LOCAL in step.tags else f"guide.yaml at llm-d {plan.llmd_ref}, nothing added"
+    if StepTag.LOCAL in step.tags:
+        origin = "llmdup's local profile"
+    elif StepTag.GATEWAY_PROVIDER in step.tags:
+        origin = "llmdup: GKE rejects the guide's provider.name=none route"
+    else:
+        origin = f"guide.yaml at llm-d {plan.llmd_ref}, nothing added"
     return Text.assemble((f"# rendered from {origin}\n", theme.DIM), step.command)
 
 

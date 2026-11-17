@@ -81,7 +81,7 @@ class Core:
 
     def plan(self, choices: Choices, facts: ClusterFacts | None) -> Plan:
         """Build a deploy plan, as `llmdup plan` does."""
-        detected = Detected(accelerator=facts.accelerator, provider=facts.provider) if facts else None
+        detected = Detected.from_facts(facts) if facts else None
         return build_plan(choices, ref=self.ref, detected=detected)
 
     async def doctor(self, choices: Choices | None, facts: ClusterFacts | None = None) -> DoctorReport:
