@@ -90,6 +90,8 @@ def command_text(plan: Plan, step: Step) -> Text:
         origin = "llmdup's local profile"
     elif StepTag.GATEWAY_PROVIDER in step.tags:
         origin = "llmdup: GKE rejects the guide's provider.name=none route"
+    elif StepTag.GATEWAY_ROUTE in step.tags:
+        origin = "llmdup: GKE routes a minute or two after the Gateway is programmed"
     else:
         origin = f"guide.yaml at llm-d {plan.llmd_ref}, nothing added"
     return Text.assemble((f"# rendered from {origin}\n", theme.DIM), step.command)

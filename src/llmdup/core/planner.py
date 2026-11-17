@@ -43,6 +43,14 @@ SIM_MODEL = "llmdup-sim"
 GATEWAY_NAME = "llm-d-inference-gateway"
 # ponytail: GKE's built-in GatewayClasses all start with this; read the class's controllerName if one ever does not
 GKE_GATEWAY_CLASS = "gke-l7-"
+# ponytail: 60 tries 10 s apart; GKE took about 2 min after Programmed in our run
+GKE_ROUTE_PROBE = r"""kubectl run gateway-probe --rm -i --restart=Never --image="${CURL_TEST_IMAGE}" --namespace="${NAMESPACE}" \
+  --env="IP=${IP}" --env="MODEL=${MODEL}" -- /bin/sh -c 'for i in $(seq 1 60); do
+    curl -sf -o /dev/null --max-time 10 -X POST "http://${IP}/v1/completions" -H "Content-Type: application/json" \
+      -d "{\"model\": \"${MODEL}\", \"prompt\": \"ping\", \"max_tokens\": 1}" && echo "gateway routes after ${i} tries" && exit 0
+    sleep 10
+  done
+  echo "gateway ${IP} does not route to the model servers" >&2; exit 1'"""
 INDEX_SUFFIX = re.compile(r"\[\d+\]$")
 DELETE_NAMESPACE = re.compile(r"kubectl\s+delete\s+namespace\b")
 
@@ -300,9 +308,11 @@ def _local_step(path: str, command: str, tag: StepTag = StepTag.LOCAL) -> Step:
 
 
 def _apply_gateway_provider(builder: _Builder, gateway_class: str) -> None:
-    """On a GKE Gateway, switch the router chart to `provider.name=gke`, as llm-d's GKE gateway doc does.
+    """On a GKE Gateway, switch the router chart to `provider.name=gke`, as llm-d's GKE gateway doc does, and probe the route.
 
     The guide's gateway step pins `GW_PROVIDER_NAME=none`, whose HTTPRoute sets `timeouts`; GKE rejects that route.
+    GKE also answers 404 `fault filter abort` for a minute or two after the Gateway is programmed, and the guide's
+    `curl -sS` test passes on that, so a probe retries a completion before the first test.
     """
     if not gateway_class.startswith(GKE_GATEWAY_CLASS):
         return
@@ -315,6 +325,9 @@ def _apply_gateway_provider(builder: _Builder, gateway_class: str) -> None:
     at = next((i for i, s in enumerate(builder.steps) if s.path == "deploy.gateway"), None)
     if at is not None:
         builder.steps.insert(at + 1, step)
+    first_test = next((i for i, s in enumerate(builder.steps) if StepTag.SENDS_TRAFFIC in s.tags), None)
+    if first_test is not None:
+        builder.steps.insert(first_test, _local_step("verify.gateway_route", GKE_ROUTE_PROBE, StepTag.GATEWAY_ROUTE))
 
 
 def _namespace(info: GuideInfo, resolved: _Resolved) -> str | None:

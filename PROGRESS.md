@@ -155,7 +155,7 @@ An Opus reviewer read Phases 0-3 and 5 and reported 4 high, 8 medium and 11 low 
 - `mcp>=2.3`; NOTICE lists the rendered GPU overlay fixture; the local-profile flow moved from cli.py into `core/local.py`; MCP `doctor` takes the same choices as `up`.
 
 ## Phase 6: Real clusters and release
-- [ ] Gateway mode, and every accelerator and engine the guide's matrix allows. Gateway mode on GKE: two llmdup fixes landed, the run then stopped on a GCP API that is off in the test project (below).
+- [ ] Gateway mode, and every accelerator and engine the guide's matrix allows. Gateway mode: done on GKE with the simulator (below), after three llmdup fixes. Accelerators and engines: not run, the test project has no hardware the guide supports.
 - [x] README: install, a local demo, screenshots of the UI, and the command reference. Screenshots are now the app on the GKE cluster below.
 - [ ] Publish 0.1.0 to PyPI after the name check. Name check done 16 Nov 2026: `llmdup` is free on PyPI (404) and as a GitHub user/org (404). Not published: needs the user's go-ahead.
 
@@ -171,13 +171,15 @@ Cluster: GKE 1.36.4-gke.2377000, zonal us-central1-a, 2 x e2-standard-4 plus 1 s
 | `up --profile local` standalone | 9/9 steps ok in 80 s, completion through the router |
 | `status`, `test`, `down` | ready 3/3 pods; test 5/5 steps ok (request, 10 x HTTP 200 shared prefix, metrics); down leaves nothing |
 | UI on GKE | plan, deploy (`u`, confirm), stack, test (`t`), logs, tear down (`ctrl-d`): all ok |
-| `up --profile local --mode gateway` | Not finished: GKE answers `NetworkServices API is not enabled` for the inference load balancer's traffic extension; enabling `networkservices.googleapis.com` was not done |
+| `up --profile local --mode gateway` | First try stopped: GKE needs `networkservices.googleapis.com` for the inference load balancer's traffic extension. With it enabled (user, 17 Nov), on a CPU-only cluster (the simulator needs no GPU): doctor all ok, `up` 11/11 in about 5 min, the GKE route probe answered after 8 tries (74 s) |
+| gateway `test`, `down` | Real completions through the regional external load balancer, 10 x HTTP 200; `down` leaves nothing (about 5 min, GKE removes the Gateway's load balancer) |
 
-Bugs found on GKE and fixed (commit 7cdceb3):
+Bugs found on GKE and fixed (commit 7cdceb3, and the route probe after it):
 - The simulator profile ran only on kind. `plan`, `doctor` and `up` take `--profile local` for any cluster, in standalone or gateway mode.
 - Upstream differs: the optimized-baseline `deploy.gateway` step pins `export GW_PROVIDER_NAME=none`, but `docs/infrastructure/gateway/gke.md` installs the same chart with `provider.name=gke`. With `none` the chart's HTTPRoute carries `timeouts`, which GKE rejects (`GWCER104 ... timeouts are not supported`), and no GKE HealthCheckPolicy is made. When the stack's `llm-d-inference-gateway` has a `gke-l7-*` class, the plan now adds `gateway.provider` right after `deploy.gateway`: `helm upgrade --reuse-values --set provider.name=gke`. Doctor names the Gateway's class, and warns when the Gateway is missing from the namespace.
 - Gateway mode ran the verify step before the Gateway had an address, so `IP` was empty. The wait now also requires the Gateway to be `Programmed` with an address (a missing Gateway does not block; doctor warns about it).
 - Stopping a run on macOS printed `PermissionError`: `killpg` answers EPERM, not ESRCH, when only zombies are left in the group. llmdup now signals the child directly in that case.
+- On GKE, `up` reported all steps ok while the load balancer still answered 404 `fault filter abort`: the route works about 2 min after the Gateway is `Programmed` (80 s after the HTTPRoute is `Reconciled`), and the guide's `curl -sS` test exits 0 on a 404. On a GKE Gateway the plan now adds `verify.gateway_route` before the first test: an in-cluster `curl -sf` completion, retried every 10 s for up to 10 min. A failing probe pod fails `kubectl run` (exit 1) even when GKE falls back from attach to logs.
 - The stack view titled the test pane with the test plan's first step (`verify.endpoint.standalone`); it is `verify.tests` now.
 
 Seen, not llmdup: `kubectl run --rm -i` on GKE falls back from attach to streaming logs and prints the pod's output twice. The `cleanup.rest[1]` monitoring delete fails without Prometheus Operator CRDs, as on kind.

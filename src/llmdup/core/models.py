@@ -75,6 +75,7 @@ class StepTag(StrEnum):
     MANUAL_OPTION = "manual option"
     LOCAL = "local profile"
     GATEWAY_PROVIDER = "gateway provider"
+    GATEWAY_ROUTE = "gateway route"
 
 
 class Profile(StrEnum):

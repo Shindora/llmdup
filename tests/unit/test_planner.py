@@ -147,6 +147,15 @@ def test_gke_gateway_switches_router_provider() -> None:
     step = plan.steps[paths.index("gateway.provider")]
     assert StepTag.GATEWAY_PROVIDER in step.tags
     assert "--set provider.name=gke" in step.command
+    assert paths.index("verify.gateway_route") == paths.index("verify.tests.request") - 1
+    probe = plan.steps[paths.index("verify.gateway_route")]
+    assert StepTag.GATEWAY_ROUTE in probe.tags
+    assert "curl -sf" in probe.command
+
+
+def test_gke_gateway_probe_skipped_without_verify() -> None:
+    plan = build_plan(Choices(guide="optimized-baseline", mode="gateway"), detected=Detected(gateways=GKE_GATEWAY), verify=False)
+    assert "verify.gateway_route" not in [s.path for s in plan.steps]
 
 
 @pytest.mark.parametrize(
@@ -161,4 +170,4 @@ def test_gke_gateway_switches_router_provider() -> None:
 )
 def test_gateway_provider_step_only_for_a_gke_gateway_on_up(mode: str, gateways: dict[str, str], action: Action) -> None:
     plan = build_plan(Choices(guide="optimized-baseline", mode=mode), action=action, detected=Detected(gateways=gateways))
-    assert "gateway.provider" not in [s.path for s in plan.steps]
+    assert {"gateway.provider", "verify.gateway_route"}.isdisjoint(s.path for s in plan.steps)
