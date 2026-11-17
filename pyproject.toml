@@ -20,6 +20,10 @@ dependencies = [
     "typer>=0.24",
 ]
 
+[project.urls]
+Repository = "https://github.com/Shindora/llmdup"
+Issues = "https://github.com/Shindora/llmdup/issues"
+
 [project.scripts]
 llmdup = "llmdup.cli:app"
 

@@ -15,7 +15,7 @@ One core, three front ends, zero copied manifests.
 
 <br>
 
-<img src="docs/screenshots/guides.png" alt="llmdup terminal UI: the guides view, with support for the detected accelerator" width="900">
+<img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/guides.png" alt="llmdup terminal UI: the guides view, with support for the detected accelerator" width="900">
 
 </div>
 
@@ -55,7 +55,7 @@ llm-d 1.0 ships every well-lit path as a machine-readable recipe: a `guide.yaml`
 ## Install
 
 ```bash
-uv tool install llmdup        # 0.1.0 is not on PyPI yet; from a checkout: uv tool install .
+uv tool install llmdup        # or: pip install llmdup
 llmdup version
 ```
 
@@ -190,7 +190,7 @@ Every subcommand runs without prompts when given `--yes`, and with `--json` prin
 claude mcp add llmdup -- llmdup mcp
 ```
 
-Eight tools over stdio: `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test`, `down`. They return the same models as the CLI's `data`. `up` and `down` are two-step by design: without `confirm: true` they change nothing and return the plan, the target kube context and the exact commands, and the confirmed call must name that same context, so the change lands on the cluster the user approved. [`skills/llmdup/SKILL.md`](skills/llmdup/SKILL.md) teaches an agent the CLI and these rules.
+Eight tools over stdio: `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `status`, `test`, `down`. They return the same models as the CLI's `data`. `up` and `down` are two-step by design: without `confirm: true` they change nothing and return the plan, the target kube context and the exact commands, and the confirmed call must name that same context, so the change lands on the cluster the user approved. [`skills/llmdup/SKILL.md`](https://github.com/Shindora/llmdup/blob/main/skills/llmdup/SKILL.md) teaches an agent the CLI and these rules.
 
 ## Terminal UI
 
@@ -198,16 +198,16 @@ Eight tools over stdio: `list_guides`, `show_guide`, `doctor`, `plan`, `up`, `st
 
 <table>
 <tr>
-<td width="50%" align="center"><img src="docs/screenshots/plan.png" alt="Plan view"><br><b>Plan</b></td>
-<td width="50%" align="center"><img src="docs/screenshots/deploy.png" alt="Deploy view"><br><b>Deploy</b></td>
+<td width="50%" align="center"><img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/plan.png" alt="Plan view"><br><b>Plan</b></td>
+<td width="50%" align="center"><img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/deploy.png" alt="Deploy view"><br><b>Deploy</b></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/screenshots/doctor.png" alt="Doctor view"><br><b>Doctor</b></td>
-<td align="center"><img src="docs/screenshots/stacks.png" alt="Stacks view"><br><b>Stacks</b></td>
+<td align="center"><img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/doctor.png" alt="Doctor view"><br><b>Doctor</b></td>
+<td align="center"><img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/stacks.png" alt="Stacks view"><br><b>Stacks</b></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/screenshots/filter.png" alt="Filter"><br><b>Filter</b></td>
-<td align="center"><img src="docs/screenshots/help.png" alt="Help view"><br><b>Help</b></td>
+<td align="center"><img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/filter.png" alt="Filter"><br><b>Filter</b></td>
+<td align="center"><img src="https://raw.githubusercontent.com/Shindora/llmdup/main/docs/screenshots/help.png" alt="Help view"><br><b>Help</b></td>
 </tr>
 </table>
 
@@ -273,10 +273,10 @@ uv run pytest -m e2e           # kind + simulator, CLI and UI; refuses any conte
 uv run ruff check . && uv run ruff format --check . && uv run ty check
 ```
 
-CI runs lint, types and tests on Python 3.14, 3.15 and the free-threaded 3.14t, plus the upstream and end-to-end suites on `main` and nightly. [`PLAN.md`](PLAN.md) is the design, [`PROGRESS.md`](PROGRESS.md) tracks each phase and every place where upstream llm-d differs from the plan.
+CI runs lint, types and tests on Python 3.14, 3.15 and the free-threaded 3.14t, plus the upstream and end-to-end suites on `main` and nightly. [`PLAN.md`](https://github.com/Shindora/llmdup/blob/main/PLAN.md) is the design, [`PROGRESS.md`](https://github.com/Shindora/llmdup/blob/main/PROGRESS.md) tracks each phase and every place where upstream llm-d differs from the plan.
 
 **Not in 0.1:** creating cloud clusters, choosing a configuration from a workload or SLA, benchmarks, stacking several guides in one namespace, upgrades between llm-d versions, and guides without a `guide.yaml`.
 
 ## License
 
-Apache-2.0, like llm-d. Test fixtures copied from llm-d are listed in [`NOTICE`](NOTICE).
+Apache-2.0, like llm-d. Test fixtures copied from llm-d are listed in [`NOTICE`](https://github.com/Shindora/llmdup/blob/main/NOTICE).

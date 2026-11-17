@@ -157,7 +157,7 @@ An Opus reviewer read Phases 0-3 and 5 and reported 4 high, 8 medium and 11 low 
 ## Phase 6: Real clusters and release
 - [ ] Gateway mode, and every accelerator and engine the guide's matrix allows. Gateway mode: done on GKE with the simulator (below), after three llmdup fixes. Accelerators and engines: not run, the test project has no hardware the guide supports.
 - [x] README: install, a local demo, screenshots of the UI, and the command reference. Screenshots are now the app on the GKE cluster below.
-- [ ] Publish 0.1.0 to PyPI after the name check. Name check done 16 Nov 2026: `llmdup` is free on PyPI (404) and as a GitHub user/org (404). Not published: needs the user's go-ahead.
+- [ ] Publish 0.1.0 to PyPI after the name check. Name check done 16 Nov 2026: `llmdup` is free on PyPI (404) and as a GitHub user/org (404). Release path set up 17 Nov 2026: the repo is public, `.github/workflows/release.yml` publishes on a `v*` tag through PyPI trusted publishing (environment `pypi`, actions pinned to commit SHAs), README links are absolute so the PyPI page shows the screenshots.
 
 Done when: not met yet. It needs `up optimized-baseline` on real accelerators the guide supports (4 x 80 GB GPUs, or TPU v5p/v6e/v7).
 
