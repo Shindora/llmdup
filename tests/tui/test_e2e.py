@@ -14,6 +14,7 @@ from textual.pilot import Pilot
 from llmdup.core.models import Action, Profile
 from llmdup.tui.app import LlmdupApp
 from llmdup.tui.core import Core
+from llmdup.tui.run import RowState
 from llmdup.tui.screens.dialogs import ConfirmDialog
 from llmdup.tui.screens.plan import PlanScreen
 from llmdup.tui.screens.stacks import StackScreen, StacksScreen
@@ -102,7 +103,8 @@ def test_plan_deploy_open_stack_test_and_tear_down_without_leaving_the_ui() -> N
         await finished(pilot, app, Action.TEST, 600)
         assert isinstance(app.screen, StackScreen)
         assert app.deploy_run is not None
-        assert any("HTTP 200" in e.text for e in app.deploy_run.log)
+        # kubectl run --rm -i can drop the output of a pod that exits before attach, so check the step results, not the curl output
+        assert [r.path for r in app.deploy_run.rows if r.state is not RowState.DONE] == []
 
         await pilot.press("ctrl+d")
         asked = await confirm_if_asked(
